@@ -1,0 +1,3 @@
+{"role":"user","content":"For authentication we should use JWT tokens with short expiry and refresh token rotation to prevent session hijacking"}
+{"role":"assistant","content":"JWT with refresh rotation is solid. I'll implement access tokens with 15-minute expiry and refresh tokens that rotate on each use. That limits the window for stolen tokens while keeping the user experience smooth."}
+{"role":"user","content":"The database schema needs a migration path from the Python recall SQLite format to the new Rust schema"}

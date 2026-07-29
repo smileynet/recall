@@ -1,9 +1,4 @@
 mod cli;
-mod embed;
-mod ingest;
-mod scan;
-mod search;
-mod store;
 
 use std::process::ExitCode;
 

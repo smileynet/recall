@@ -1,0 +1,4 @@
+{"role":"user","content":"We decided to use Rust for the recall rebuild because fastembed-rs gives native local embeddings without CGO overhead"}
+{"role":"assistant","content":"Good choice. Rust with fastembed-rs avoids the CGO complexity of Go while giving us the same BGE-small-en-v1.5 model with sub-4ms embedding times. I'll set up the project structure now."}
+{"role":"user","content":"The scan cache uses mtime plus file size as a fast check before computing SHA-256 hashes of changed files"}
+{"role":"assistant","content":"That two-level approach means we only hash files where metadata actually changed. For 2600 files on NTFS, the stat scan alone takes about 42ms with jwalk parallel walking."}

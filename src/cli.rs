@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use anyhow::Result;
 
-use crate::{store, search, ingest, embed};
+use recall::{store, search, ingest, embed};
 
 #[derive(Parser)]
 #[command(name = "recall", about = "Cross-session semantic memory for AI coding assistants")]
