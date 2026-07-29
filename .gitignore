@@ -1,0 +1,20 @@
+# Build
+/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Project conventions
+.scratch/
+!.scratch/HANDOFF.md
+.references/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model cache (downloaded at runtime)
+/models/
+.fastembed_cache/

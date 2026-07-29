@@ -1,0 +1,30 @@
+[package]
+name = "recall"
+version = "0.1.0"
+edition = "2021"
+description = "Cross-session semantic memory for AI coding assistants"
+license = "MIT"
+repository = "https://github.com/smileynet/recall"
+keywords = ["cli", "semantic-search", "embeddings", "memory", "ai"]
+categories = ["command-line-utilities", "text-processing"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.32", features = ["bundled", "vtab"] }
+fastembed = "4"
+jwalk = "0.8"
+sha2 = "0.10"
+fs2 = "0.4"
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
