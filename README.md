@@ -83,6 +83,10 @@ Built in Rust for instant startup and fast search:
 
 **[MemPalace](https://github.com/MemPalace/mempalace)** — The wings/rooms/drawers taxonomy and the concept of agent-owned memory. recall adapts MemPalace's architecture as a purpose-built single-binary implementation.
 
+**[Google OKF](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf)** — The "nouns, not verbs" insight that shapes how project knowledge (`.memory/`) stays separate from behavior (skills). recall's import understands OKF-compatible frontmatter.
+
+**[fastembed](https://github.com/Anush008/fastembed-rs)** — Local ONNX embedding inference that makes server-free semantic search practical. The Rust port by the Qdrant team powers recall's 3ms-per-embedding performance.
+
 ## License
 
 MIT
