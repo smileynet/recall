@@ -1,7 +1,7 @@
 ---
 id: 5
 title: "Contract tests: health --json and prime output format"
-status: open
+status: done
 priority: high
 blocked_by: [2]
 estimate: 45min

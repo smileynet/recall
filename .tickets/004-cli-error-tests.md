@@ -1,7 +1,7 @@
 ---
 id: 4
 title: "E2E tests: CLI error handling and arg validation"
-status: open
+status: done
 priority: high
 blocked_by: [2]
 estimate: 45min
