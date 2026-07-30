@@ -1,7 +1,7 @@
 ---
 id: 8
 title: "Test infrastructure: shared helpers, fixtures, OnceLock embedder"
-status: open
+status: done
 priority: high
 blocked_by: []
 estimate: 30min

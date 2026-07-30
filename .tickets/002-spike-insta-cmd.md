@@ -1,7 +1,7 @@
 ---
 id: 2
 title: "Spike: evaluate insta-cmd for CLI snapshot testing"
-status: open
+status: done
 priority: high
 type: spike
 blocked_by: []

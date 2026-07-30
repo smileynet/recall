@@ -1,7 +1,7 @@
 ---
 id: 3
 title: "Unit tests: chunking, parsing, RRF, classification"
-status: open
+status: done
 priority: high
 blocked_by: []
 estimate: 1h
