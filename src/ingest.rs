@@ -100,6 +100,7 @@ pub fn run_ingest(path: Option<&str>) -> Result<i32> {
 }
 
 /// Import markdown files from a directory into a wing.
+/// Uses SHA-256 content hashing to skip unchanged files on re-import.
 pub fn import_directory(path: &str, wing: &str) -> Result<i32> {
     let dir = Path::new(path);
     if !dir.is_dir() {
@@ -109,28 +110,133 @@ pub fn import_directory(path: &str, wing: &str) -> Result<i32> {
     let conn = store::open_db()?;
     let embedder = embed::Embedder::new()?;
 
-    let mut total_chunks = 0;
-    for entry in walkdir_md(dir) {
-        let content = std::fs::read_to_string(&entry)
-            .with_context(|| format!("reading {}", entry.display()))?;
-        let chunks = chunk_markdown(&content);
-        if chunks.is_empty() { continue; }
+    let md_files = walkdir_md(dir);
+    if md_files.is_empty() {
+        println!("  No .md files found in {}", path);
+        return Ok(0);
+    }
 
+    // Build set of current file relative paths for orphan detection
+    let current_rel_paths: std::collections::HashSet<String> = md_files.iter()
+        .filter_map(|f| f.strip_prefix(dir).ok())
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+
+    // Phase 1: Detect deleted files (in manifest but no longer on disk)
+    let existing_sources = store::get_import_sources_for_wing(&conn, wing)?;
+    let mut files_deleted = 0;
+    for src_path in &existing_sources {
+        if !current_rel_paths.contains(src_path.as_str()) {
+            let source_key = format!("import:{}:{}", wing, src_path);
+            store::delete_chunks_by_source(&conn, &source_key)?;
+            store::delete_import_source(&conn, src_path, wing)?;
+            files_deleted += 1;
+        }
+    }
+
+    // Phase 2: Hash-gate import for new and changed files
+    let mut total_chunks = 0;
+    let mut files_imported = 0;
+    let mut files_updated = 0;
+    let mut files_skipped = 0;
+
+    eprintln!("  Importing: {}", dir.display());
+    eprintln!("  Wing: {}", wing);
+    eprintln!("  Files: {} markdown", md_files.len());
+
+    for entry in &md_files {
+        let rel_path = match entry.strip_prefix(dir) {
+            Ok(p) => p.to_string_lossy().to_string(),
+            Err(_) => continue,
+        };
+        let source_key = format!("import:{}:{}", wing, rel_path);
+
+        let content = std::fs::read_to_string(entry)
+            .with_context(|| format!("reading {}", entry.display()))?;
+        if content.trim().is_empty() {
+            continue;
+        }
+
+        // Compute content hash
+        use sha2::{Sha256, Digest};
+        let content_hash = format!("{:x}", Sha256::digest(content.as_bytes()));
+        let file_size = content.len() as i64;
+
+        // Hash-gate: compare against stored hash
+        let stored_hash = store::get_import_source_hash(&conn, &rel_path, wing)?;
+        if stored_hash.as_deref() == Some(&content_hash) {
+            files_skipped += 1;
+            continue;
+        }
+
+        // File is new or changed — delete old chunks if updating
+        if stored_hash.is_some() {
+            store::delete_chunks_by_source(&conn, &source_key)?;
+            files_updated += 1;
+        } else {
+            files_imported += 1;
+        }
+
+        // Chunk
+        let chunks = chunk_markdown(&content);
+        if chunks.is_empty() {
+            store::upsert_import_source(&conn, &rel_path, wing, &content_hash, file_size, 0)?;
+            continue;
+        }
+
+        // Derive room from relative path
+        let room = Path::new(&rel_path)
+            .parent()
+            .and_then(|p| p.components().next())
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .unwrap_or_else(|| "general".to_string());
+
+        // Detect type from frontmatter
+        let dtype = detect_type_from_frontmatter(&content);
+
+        // Embed and store
         let texts: Vec<&str> = chunks.iter().map(|c| c.as_str()).collect();
         let embeddings = embedder.embed_batch(&texts)?;
 
         conn.execute("BEGIN IMMEDIATE", [])?;
         for (chunk, embedding) in chunks.iter().zip(embeddings.iter()) {
-            let room = detect_room_from_path(&entry);
-            store::insert_chunk(&conn, chunk, wing, &room, "import",
-                &entry.to_string_lossy(), embedding)?;
+            store::insert_chunk(&conn, chunk, wing, &room, &dtype, &source_key, embedding)?;
         }
         conn.execute("COMMIT", [])?;
+
+        // Update manifest
+        store::upsert_import_source(&conn, &rel_path, wing, &content_hash, file_size, chunks.len() as i64)?;
         total_chunks += chunks.len();
     }
 
-    println!("Imported {} chunks into wing {:?}", total_chunks, wing);
+    // Summary
+    let mut parts = Vec::new();
+    if files_imported > 0 { parts.push(format!("{} new", files_imported)); }
+    if files_updated > 0 { parts.push(format!("{} updated", files_updated)); }
+    if files_skipped > 0 { parts.push(format!("{} unchanged", files_skipped)); }
+    if files_deleted > 0 { parts.push(format!("{} deleted", files_deleted)); }
+    let summary = if parts.is_empty() { "no changes".to_string() } else { parts.join(", ") };
+    println!("  Done: {} ({} chunks indexed)", summary, total_chunks);
     Ok(0)
+}
+
+/// Extract document type from YAML frontmatter (simple key scan).
+fn detect_type_from_frontmatter(content: &str) -> String {
+    let content = content.trim_start_matches('\u{feff}'); // strip BOM
+    if !content.starts_with("---") {
+        return "document".to_string();
+    }
+    // Find end of frontmatter
+    if let Some(end) = content[3..].find("\n---") {
+        let fm = &content[3..3 + end];
+        for line in fm.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("type:") {
+                return trimmed[5..].trim().trim_matches(|c| c == '"' || c == '\'').to_string();
+            }
+        }
+    }
+    "document".to_string()
 }
 
 // =============================================================================
@@ -544,14 +650,6 @@ fn chunk_markdown(content: &str) -> Vec<String> {
     }
 
     chunks
-}
-
-/// Detect room from a markdown file's subdirectory.
-fn detect_room_from_path(path: &Path) -> String {
-    path.parent()
-        .and_then(|p| p.file_name())
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "general".to_string())
 }
 
 /// Walk a directory for .md files.

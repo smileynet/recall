@@ -62,6 +62,16 @@ fn init_schema(conn: &Connection) -> Result<()> {
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS import_sources (
+            path TEXT NOT NULL,
+            wing TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            file_size INTEGER NOT NULL DEFAULT 0,
+            last_indexed_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            chunk_count INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (path, wing)
+        );
     ")?;
     Ok(())
 }
@@ -259,6 +269,66 @@ pub fn set_scan_entry(conn: &Connection, path: &str, mtime: i64, size: i64, hash
         params![path, mtime, size, hash],
     )?;
     Ok(())
+}
+
+// --- Import sources ---
+
+/// Get the stored content hash for an import source (path + wing).
+pub fn get_import_source_hash(conn: &Connection, path: &str, wing: &str) -> Result<Option<String>> {
+    let result = conn.query_row(
+        "SELECT content_hash FROM import_sources WHERE path = ?1 AND wing = ?2",
+        params![path, wing],
+        |row| row.get(0),
+    );
+    match result {
+        Ok(h) => Ok(Some(h)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Upsert an import source entry (tracks what was imported and its hash).
+pub fn upsert_import_source(
+    conn: &Connection,
+    path: &str,
+    wing: &str,
+    content_hash: &str,
+    file_size: i64,
+    chunk_count: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO import_sources (path, wing, content_hash, file_size, last_indexed_at, chunk_count)
+         VALUES (?1, ?2, ?3, ?4, unixepoch(), ?5)",
+        params![path, wing, content_hash, file_size, chunk_count],
+    )?;
+    Ok(())
+}
+
+/// Get all import source paths for a wing.
+pub fn get_import_sources_for_wing(conn: &Connection, wing: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT path FROM import_sources WHERE wing = ?1")?;
+    let rows = stmt.query_map(params![wing], |row| row.get(0))?;
+    Ok(rows.filter_map(|r| r.ok()).collect())
+}
+
+/// Delete an import source entry.
+pub fn delete_import_source(conn: &Connection, path: &str, wing: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM import_sources WHERE path = ?1 AND wing = ?2",
+        params![path, wing],
+    )?;
+    Ok(())
+}
+
+/// Delete chunks by source key.
+pub fn delete_chunks_by_source(conn: &Connection, source: &str) -> Result<usize> {
+    // Delete FTS entries first
+    conn.execute(
+        "DELETE FROM fts_chunks WHERE rowid IN (SELECT id FROM chunks WHERE source = ?1)",
+        params![source],
+    )?;
+    let deleted = conn.execute("DELETE FROM chunks WHERE source = ?1", params![source])?;
+    Ok(deleted)
 }
 
 // --- Types ---
