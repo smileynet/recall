@@ -42,7 +42,11 @@ enum Commands {
         wing: String,
     },
     /// Session start payload (recent facts + top results)
-    Prime,
+    Prime {
+        /// Wing to scope results (default: auto-detect from cwd)
+        #[arg(long)]
+        wing: Option<String>,
+    },
     /// Corpus overview
     Status,
     /// Machine-readable health diagnostics
@@ -75,7 +79,7 @@ pub fn run() -> i32 {
         Commands::Add { content, wing, room, r#type } => cmd_add(&content, &wing, &room, &r#type),
         Commands::Ingest { path } => cmd_ingest(path.as_deref()),
         Commands::Import { path, wing } => cmd_import(&path, &wing),
-        Commands::Prime => cmd_prime(),
+        Commands::Prime { wing } => cmd_prime(wing.as_deref()),
         Commands::Status => cmd_status(),
         Commands::Health { json } => cmd_health(json),
         Commands::Forget { wing, older_than } => cmd_forget(&wing, older_than.as_deref()),
@@ -131,19 +135,79 @@ fn cmd_import(path: &str, wing: &str) -> Result<i32> {
     ingest::import_directory(path, wing)
 }
 
-fn cmd_prime() -> Result<i32> {
+fn cmd_prime(wing_arg: Option<&str>) -> Result<i32> {
     let db = store::open_db()?;
-    let recent = store::recent_agent_facts(&db, 5)?;
+
+    // Auto-detect wing from cwd if not provided
+    let wing = wing_arg
+        .map(|w| w.to_string())
+        .unwrap_or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().replace('-', "_")))
+                .unwrap_or_else(|| "global".to_string())
+        });
+
+    // Instructions header (always shown)
+    println!("## Recall - Cross-Session Memory");
+    println!();
+    println!("Use `recall search \"query\"` before answering questions about past decisions.");
+    println!("Use `recall add \"fact\" --wing X --room Y --type decision` to persist learnings.");
+    println!();
+
+    // Recent agent-written memories (scoped to wing)
+    let recent = store::recent_agent_facts(&db, Some(&wing), 7)?;
     if !recent.is_empty() {
-        println!("## Recall - Cross-Session Memory\n");
-        println!("Use `recall search \"query\"` before answering questions about past decisions.");
-        println!("Use `recall add \"fact\" --wing X --room Y --type decision` to persist learnings.\n");
-        println!("## Recent Memories\n");
+        println!("## Recent Memories ({})", wing);
+        println!();
         for chunk in &recent {
-            println!("- [{}] {} ({})", chunk.dtype, chunk.content, chunk.wing);
+            let date = format_epoch_date(chunk.created_at);
+            let preview: String = chunk.content.chars().take(120).collect();
+            println!("- [{}] {} ({})", chunk.dtype, preview, date);
+        }
+        println!();
+    }
+
+    // Relevant context via search (top retrieval for the wing)
+    let embedder = embed::Embedder::new()?;
+    let query = format!("important decisions and architecture for {}", wing);
+    let results = search::hybrid_search(&db, &embedder, &query, Some(&wing), 3)?;
+    if !results.is_empty() {
+        println!("## Relevant Context");
+        println!();
+        for r in &results {
+            let preview: String = r.content.chars().take(200).collect();
+            let formatted = preview.replace('\n', "\n  ");
+            println!("  {}", formatted);
+            if !r.source.is_empty() {
+                println!("  (source: {})", r.source);
+            }
+            println!();
         }
     }
+
     Ok(0)
+}
+
+/// Format a unix epoch timestamp as YYYY-MM-DD.
+fn format_epoch_date(epoch: i64) -> String {
+    if epoch <= 0 {
+        return "unknown".to_string();
+    }
+    // Convert epoch seconds to date components
+    let days = epoch / 86400;
+    // Algorithm from http://howardhinnant.github.io/date_algorithms.html (civil_from_days)
+    let z = days + 719468;
+    let era = z / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{:04}-{:02}-{:02}", y, m, d)
 }
 
 fn cmd_status() -> Result<i32> {

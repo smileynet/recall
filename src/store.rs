@@ -158,19 +158,40 @@ pub fn get_chunk(conn: &Connection, id: i64) -> Result<SearchResult> {
 }
 
 /// Recent agent-written facts.
-pub fn recent_agent_facts(conn: &Connection, limit: usize) -> Result<Vec<ChunkInfo>> {
-    let mut stmt = conn.prepare(
-        "SELECT content, wing, room, type FROM chunks WHERE source = 'agent' ORDER BY created_at DESC LIMIT ?1"
-    )?;
-    let rows = stmt.query_map(params![limit], |row| {
-        Ok(ChunkInfo {
-            content: row.get(0)?,
-            wing: row.get(1)?,
-            room: row.get(2)?,
-            dtype: row.get(3)?,
-        })
-    })?;
-    Ok(rows.filter_map(|r| r.ok()).collect())
+pub fn recent_agent_facts(conn: &Connection, wing: Option<&str>, limit: usize) -> Result<Vec<ChunkInfo>> {
+    let mut results = Vec::new();
+
+    if let Some(w) = wing {
+        let mut stmt = conn.prepare(
+            "SELECT content, wing, room, type, created_at FROM chunks WHERE source = 'agent' AND wing = ?1 ORDER BY created_at DESC LIMIT ?2"
+        )?;
+        let rows = stmt.query_map(params![w, limit], |row| {
+            Ok(ChunkInfo {
+                content: row.get(0)?,
+                wing: row.get(1)?,
+                room: row.get(2)?,
+                dtype: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })?;
+        for r in rows { if let Ok(v) = r { results.push(v); } }
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT content, wing, room, type, created_at FROM chunks WHERE source = 'agent' ORDER BY created_at DESC LIMIT ?1"
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            Ok(ChunkInfo {
+                content: row.get(0)?,
+                wing: row.get(1)?,
+                room: row.get(2)?,
+                dtype: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        })?;
+        for r in rows { if let Ok(v) = r { results.push(v); } }
+    }
+
+    Ok(results)
 }
 
 /// Corpus statistics.
@@ -260,6 +281,7 @@ pub struct ChunkInfo {
     pub wing: String,
     pub room: String,
     pub dtype: String,
+    pub created_at: i64,
 }
 
 #[derive(Debug, Serialize)]
