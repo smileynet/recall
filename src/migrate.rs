@@ -16,10 +16,10 @@ const PROGRESS_INTERVAL: usize = 1000;
 ///
 /// The Python DB uses:
 /// - Table `drawers` (id, content, embedding, wing, room, type, source, source_file, created_at, title)
-/// - Embeddings: bge-base-en-v1.5 (768-dim) — incompatible with Rust's bge-small (384-dim)
+/// - Embeddings: bge-base-en-v1.5 (768-dim, stored as float32)
 /// - Table `sources` (path, wing, content_hash, file_size, last_indexed_at, chunk_count)
 ///
-/// Strategy: migrate all text content + metadata, discard old embeddings, re-embed with bge-small.
+/// Strategy: copy text + embeddings directly (same model), remap schema differences.
 pub fn run_migrate(source_path: &str, batch_embed: bool) -> Result<()> {
     let source = Path::new(source_path);
     if !source.exists() {
@@ -38,17 +38,21 @@ pub fn run_migrate(source_path: &str, batch_embed: bool) -> Result<()> {
     eprintln!("  Source: {} ({} drawers)", source_path, total_rows);
 
     if batch_embed {
-        eprintln!("  Mode: full migration with re-embedding (bge-small-en-v1.5, 384-dim)");
-        eprintln!("  Estimated time: ~{} minutes", total_rows / 210 / 60 + 1);
+        eprintln!("  Mode: re-embedding all content (ignoring source embeddings)");
         let embedder = Embedder::new()?;
+        eprintln!("  Model: {} ({}-dim)", embedder.model().name(), embedder.dimensions());
         migrate_with_embeddings(&src_conn, &dst_conn, &embedder, total_rows)?;
     } else {
-        eprintln!("  Mode: text-only migration (embeddings deferred)");
-        migrate_text_only(&src_conn, &dst_conn, total_rows)?;
+        eprintln!("  Mode: direct copy (preserving source embeddings, bge-base 768-dim)");
+        migrate_direct(&src_conn, &dst_conn, total_rows)?;
     }
 
     // Migrate sources → scan_cache
     migrate_sources(&src_conn, &dst_conn)?;
+
+    // Store model metadata
+    store::set_meta(&dst_conn, "embedding_model", crate::embed::DEFAULT_MODEL.name())?;
+    store::set_meta(&dst_conn, "embedding_dim", &crate::embed::DEFAULT_MODEL.dimensions().to_string())?;
 
     let stats = store::corpus_stats(&dst_conn)?;
     eprintln!("\n  Done: {} chunks in {} wings", stats.total_chunks, stats.wings.len());
@@ -75,7 +79,7 @@ fn validate_source(conn: &Connection) -> Result<()> {
         )
         .ok();
     if let Some(ref m) = model {
-        eprintln!("  Source model: {} (will re-embed with bge-small-en-v1.5)", m);
+        eprintln!("  Source model: {}", m);
     }
     Ok(())
 }
@@ -138,23 +142,23 @@ fn migrate_with_embeddings(
     Ok(())
 }
 
-/// Migrate text only (fast, embeddings set to NULL for later background re-embedding).
-fn migrate_text_only(src: &Connection, dst: &Connection, total: usize) -> Result<()> {
+/// Migrate with direct embedding copy (same model — no re-embedding needed).
+fn migrate_direct(src: &Connection, dst: &Connection, total: usize) -> Result<()> {
     let mut stmt = src.prepare(
-        "SELECT content, wing, room, type, source, source_file, created_at, title FROM drawers ORDER BY id"
+        "SELECT content, embedding, wing, room, type, source, source_file, created_at FROM drawers ORDER BY id"
     )?;
 
     let rows = stmt.query_map([], |row| {
-        Ok(SourceRow {
-            content: row.get(0)?,
-            wing: row.get(1)?,
-            room: row.get(2)?,
-            dtype: row.get(3)?,
-            source: row.get(4)?,
-            source_file: row.get::<_, Option<String>>(5)?,
-            created_at: row.get(6)?,
-            title: row.get::<_, Option<String>>(7)?,
-        })
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Vec<u8>>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+            row.get::<_, String>(5)?,
+            row.get::<_, Option<String>>(6)?,
+            row.get::<_, String>(7)?,
+        ))
     })?;
 
     let start = Instant::now();
@@ -162,18 +166,19 @@ fn migrate_text_only(src: &Connection, dst: &Connection, total: usize) -> Result
 
     dst.execute("BEGIN", [])?;
     for row_result in rows {
-        let row = row_result?;
-        let source = effective_source(&row);
-        let created_at = parse_created_at(&row.created_at);
+        let (content, embedding_blob, wing, room, dtype, source, source_file, created_at) = row_result?;
+        let effective_src = source_file.as_deref().unwrap_or(&source);
+        let epoch = parse_created_at(&created_at);
 
+        // Insert with raw embedding blob (same format — float32 LE)
         dst.execute(
-            "INSERT INTO chunks (content, wing, room, type, source, created_at, embedding) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
-            params![row.content, row.wing, row.room, row.dtype, source, created_at],
+            "INSERT INTO chunks (content, wing, room, type, source, created_at, embedding) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![content, wing, room, dtype, effective_src, epoch, embedding_blob],
         )?;
         let rowid = dst.last_insert_rowid();
         dst.execute(
             "INSERT INTO fts_chunks (rowid, content) VALUES (?1, ?2)",
-            params![rowid, row.content],
+            params![rowid, content],
         )?;
 
         migrated += 1;

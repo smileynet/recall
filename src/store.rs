@@ -57,6 +57,11 @@ fn init_schema(conn: &Connection) -> Result<()> {
             size INTEGER NOT NULL,
             content_hash TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
     ")?;
     Ok(())
 }
@@ -188,6 +193,29 @@ pub fn delete_wing(conn: &Connection, wing: &str) -> Result<usize> {
     )?;
     let deleted = conn.execute("DELETE FROM chunks WHERE wing = ?1", params![wing])?;
     Ok(deleted)
+}
+
+// --- Meta ---
+
+pub fn set_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
+        params![key, value],
+    )?;
+    Ok(())
+}
+
+pub fn get_meta(conn: &Connection, key: &str) -> Result<Option<String>> {
+    let result = conn.query_row(
+        "SELECT value FROM meta WHERE key = ?1",
+        params![key],
+        |row| row.get(0),
+    );
+    match result {
+        Ok(v) => Ok(Some(v)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
 }
 
 // --- Scan cache ---
