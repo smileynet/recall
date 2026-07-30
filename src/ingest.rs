@@ -519,7 +519,13 @@ fn chunk_messages(messages: &[Message]) -> Vec<String> {
 
 /// Classify a chunk into a room by keyword scoring.
 fn classify_room(text: &str) -> String {
-    let text_lower = &text[..text.len().min(3000)].to_lowercase();
+    // Truncate at a char boundary for the keyword scan
+    let end = text.char_indices()
+        .take_while(|(i, _)| *i < 3000)
+        .last()
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(text.len());
+    let text_lower = text[..end].to_lowercase();
     let mut best_room = "general";
     let mut best_score = 0;
 
