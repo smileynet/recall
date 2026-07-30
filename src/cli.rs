@@ -96,6 +96,7 @@ pub fn run() -> i32 {
 
 fn cmd_search(query: &str, wing: Option<&str>, max_results: usize) -> Result<i32> {
     let db = store::open_db()?;
+    embed::check_model_mismatch(&db);
     let embedder = embed::Embedder::new()?;
     let results = search::hybrid_search(&db, &embedder, query, wing, max_results)?;
 
@@ -120,9 +121,13 @@ fn cmd_search(query: &str, wing: Option<&str>, max_results: usize) -> Result<i32
 
 fn cmd_add(content: &str, wing: &str, room: &str, dtype: &str) -> Result<i32> {
     let db = store::open_db()?;
+    embed::check_model_mismatch(&db);
     let embedder = embed::Embedder::new()?;
     let embedding = embedder.embed_one(content)?;
     store::insert_chunk(&db, content, wing, room, dtype, "agent", &embedding)?;
+    // Record model on first write
+    store::set_meta(&db, "embedding_model", embedder.model().name())?;
+    store::set_meta(&db, "embedding_dim", &embedder.dimensions().to_string())?;
     println!("Stored in {}/{} (type: {})", wing, room, dtype);
     Ok(0)
 }
@@ -137,6 +142,7 @@ fn cmd_import(path: &str, wing: &str) -> Result<i32> {
 
 fn cmd_prime(wing_arg: Option<&str>) -> Result<i32> {
     let db = store::open_db()?;
+    embed::check_model_mismatch(&db);
 
     // Auto-detect wing from cwd if not provided
     let wing = wing_arg

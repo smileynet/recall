@@ -95,6 +95,12 @@ pub fn run_ingest(path: Option<&str>) -> Result<i32> {
         total_chunks += chunks.len();
     }
 
+    // Record model metadata
+    if total_chunks > 0 {
+        store::set_meta(&conn, "embedding_model", embedder.model().name())?;
+        store::set_meta(&conn, "embedding_dim", &embedder.dimensions().to_string())?;
+    }
+
     eprintln!("  Done: {} files, {} chunks ingested", changed.len(), total_chunks);
     Ok(0)
 }
@@ -216,6 +222,13 @@ pub fn import_directory(path: &str, wing: &str) -> Result<i32> {
     if files_skipped > 0 { parts.push(format!("{} unchanged", files_skipped)); }
     if files_deleted > 0 { parts.push(format!("{} deleted", files_deleted)); }
     let summary = if parts.is_empty() { "no changes".to_string() } else { parts.join(", ") };
+
+    // Record model metadata
+    if total_chunks > 0 {
+        store::set_meta(&conn, "embedding_model", embedder.model().name())?;
+        store::set_meta(&conn, "embedding_dim", &embedder.dimensions().to_string())?;
+    }
+
     println!("  Done: {} ({} chunks indexed)", summary, total_chunks);
     Ok(0)
 }

@@ -31,10 +31,58 @@ impl Model {
             Model::BgeSmall => EmbeddingModel::BGESmallENV15,
         }
     }
+
+    /// Parse a model name string into a Model enum.
+    pub fn from_name(name: &str) -> Option<Model> {
+        match name.to_lowercase().as_str() {
+            "bge-base-en-v1.5" | "bge-base" | "base" => Some(Model::BgeBase),
+            "bge-small-en-v1.5" | "bge-small" | "small" => Some(Model::BgeSmall),
+            _ => None,
+        }
+    }
 }
 
 /// Default model — bge-base to match the Python recall corpus.
 pub const DEFAULT_MODEL: Model = Model::BgeBase;
+
+/// Read model selection from RECALL_MODEL env var, falling back to default.
+pub fn configured_model() -> Model {
+    match std::env::var("RECALL_MODEL") {
+        Ok(val) => {
+            match Model::from_name(&val) {
+                Some(m) => m,
+                None => {
+                    eprintln!("recall: unknown RECALL_MODEL='{}', valid options: bge-base, bge-small", val);
+                    eprintln!("recall: falling back to default ({})", DEFAULT_MODEL.name());
+                    DEFAULT_MODEL
+                }
+            }
+        }
+        Err(_) => DEFAULT_MODEL,
+    }
+}
+
+/// Check if the configured model matches what's stored in the database.
+/// Prints a warning to stderr if there's a mismatch.
+pub fn check_model_mismatch(conn: &rusqlite::Connection) -> Model {
+    let model = configured_model();
+
+    if let Ok(Some(stored)) = crate::store::get_meta(conn, "embedding_model") {
+        if let Some(stored_model) = Model::from_name(&stored) {
+            if stored_model != model {
+                eprintln!("recall: ⚠ MODEL MISMATCH");
+                eprintln!("recall:   Database was built with: {} ({}-dim)", stored_model.name(), stored_model.dimensions());
+                eprintln!("recall:   Current config requests: {} ({}-dim)", model.name(), model.dimensions());
+                eprintln!("recall:   Search results will be degraded — embeddings are incompatible.");
+                eprintln!("recall:   To fix: re-ingest all data with the new model, or switch back:");
+                eprintln!("recall:     RECALL_MODEL={}", stored_model.name());
+                eprintln!();
+            }
+        }
+    }
+
+    model
+}
 
 /// Embedding model wrapper — loads once, reuses for batch operations.
 pub struct Embedder {
@@ -43,9 +91,9 @@ pub struct Embedder {
 }
 
 impl Embedder {
-    /// Load the default model (bge-base-en-v1.5).
+    /// Load the configured model (from RECALL_MODEL env var or default).
     pub fn new() -> Result<Self> {
-        Self::with_model(DEFAULT_MODEL)
+        Self::with_model(configured_model())
     }
 
     /// Load a specific model.
