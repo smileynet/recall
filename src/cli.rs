@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use anyhow::Result;
 
-use recall::{store, search, ingest, embed};
+use recall::{store, search, ingest, embed, migrate};
 
 #[derive(Parser)]
 #[command(name = "recall", about = "Cross-session semantic memory for AI coding assistants")]
@@ -57,6 +57,15 @@ enum Commands {
         #[arg(long)]
         older_than: Option<String>,
     },
+    /// Migrate from a Python recall database
+    Migrate {
+        /// Path to the Python recall SQLite database
+        #[arg(long)]
+        from: String,
+        /// Re-embed all content immediately (slower but ready to search)
+        #[arg(long)]
+        embed: bool,
+    },
 }
 
 pub fn run() -> i32 {
@@ -70,6 +79,7 @@ pub fn run() -> i32 {
         Commands::Status => cmd_status(),
         Commands::Health { json } => cmd_health(json),
         Commands::Forget { wing, older_than } => cmd_forget(&wing, older_than.as_deref()),
+        Commands::Migrate { from, embed } => cmd_migrate(&from, embed),
     };
     match result {
         Ok(code) => code,
@@ -162,5 +172,10 @@ fn cmd_forget(wing: &str, _older_than: Option<&str>) -> Result<i32> {
     let db = store::open_db()?;
     let deleted = store::delete_wing(&db, wing)?;
     println!("Deleted {} chunks from wing {:?}", deleted, wing);
+    Ok(0)
+}
+
+fn cmd_migrate(from: &str, batch_embed: bool) -> Result<i32> {
+    migrate::run_migrate(from, batch_embed)?;
     Ok(0)
 }
