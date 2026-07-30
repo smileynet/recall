@@ -1,7 +1,7 @@
 ---
 id: 7
 title: "Snapshot tests: CLI output format regression"
-status: open
+status: done
 priority: normal
 blocked_by: [2]
 estimate: 45min

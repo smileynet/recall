@@ -1,7 +1,7 @@
 ---
 id: 6
 title: "Golden query regression tests for search quality"
-status: open
+status: done
 priority: normal
 blocked_by: [3]
 estimate: 1h

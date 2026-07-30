@@ -1,7 +1,7 @@
 ---
 id: 9
 title: "Integration tests: expand coverage for migrate, import, multi-format ingest"
-status: open
+status: done
 priority: normal
 blocked_by: [8]
 estimate: 1h
