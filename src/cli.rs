@@ -222,14 +222,174 @@ fn cmd_status() -> Result<i32> {
 
 fn cmd_health(json: bool) -> Result<i32> {
     let db = store::open_db()?;
-    let stats = store::corpus_stats(&db)?;
+    let health = build_health_report(&db)?;
+
     if json {
-        println!("{}", serde_json::to_string_pretty(&stats)?);
+        println!("{}", serde_json::to_string_pretty(&health)?);
     } else {
-        println!("Total chunks: {}", stats.total_chunks);
-        println!("Wings: {}", stats.wings.len());
+        println!("\n  Recall Health");
+        println!("  {}", "─".repeat(40));
+        println!("  Total chunks:  {:>6} ({} import, {} session, {} agent)",
+            health.total_chunks, health.import_chunks, health.session_chunks, health.agent_chunks);
+        println!("  Wings:         {:>6}", health.wing_count);
+        println!("  Coverage:      {}/{} projects imported",
+            health.covered_projects, health.discoverable_projects);
+        if !health.missing_projects.is_empty() {
+            let display: Vec<&str> = health.missing_projects.iter().take(5).map(|s| s.as_str()).collect();
+            let suffix = if health.missing_projects.len() > 5 {
+                format!(" (+{} more)", health.missing_projects.len() - 5)
+            } else {
+                String::new()
+            };
+            println!("  Missing:       {}{}", display.join(", "), suffix);
+        }
+        if !health.duplicates.is_empty() {
+            println!("  ⚠ Duplicates:  {:?}", health.duplicates);
+        }
+        if let Some(ts) = health.last_ingest_ts {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let hours = (now - ts) as f64 / 3600.0;
+            println!("  Last ingest:   {:.1}h ago", hours);
+        } else {
+            println!("  Last ingest:   never");
+        }
+        println!();
     }
     Ok(0)
+}
+
+#[derive(serde::Serialize)]
+struct HealthReport {
+    total_chunks: i64,
+    import_chunks: i64,
+    session_chunks: i64,
+    agent_chunks: i64,
+    wing_count: usize,
+    wings: std::collections::HashMap<String, i64>,
+    import_wings: Vec<String>,
+    duplicates: Vec<Vec<String>>,
+    last_ingest_ts: Option<i64>,
+    discoverable_projects: usize,
+    covered_projects: usize,
+    missing_projects: Vec<String>,
+    stale_wings: Vec<String>,
+}
+
+fn build_health_report(db: &rusqlite::Connection) -> Result<HealthReport> {
+    // Total chunks
+    let total: i64 = db.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))?;
+
+    // Per-source-type counts
+    let import_chunks: i64 = db.query_row(
+        "SELECT COUNT(*) FROM chunks WHERE source LIKE 'import:%'", [], |r| r.get(0)
+    ).unwrap_or(0);
+    let session_chunks: i64 = db.query_row(
+        "SELECT COUNT(*) FROM chunks WHERE type = 'session'", [], |r| r.get(0)
+    ).unwrap_or(0);
+    let agent_chunks: i64 = db.query_row(
+        "SELECT COUNT(*) FROM chunks WHERE source = 'agent'", [], |r| r.get(0)
+    ).unwrap_or(0);
+
+    // Per-wing breakdown
+    let mut stmt = db.prepare("SELECT wing, COUNT(*) FROM chunks GROUP BY wing ORDER BY wing")?;
+    let wings: std::collections::HashMap<String, i64> = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?.filter_map(|r| r.ok()).collect();
+
+    // Import wings (wings with import: source entries)
+    let mut stmt = db.prepare("SELECT DISTINCT wing FROM chunks WHERE source LIKE 'import:%'")?;
+    let import_wings: Vec<String> = stmt.query_map([], |row| row.get(0))?
+        .filter_map(|r| r.ok()).collect();
+
+    // Duplicate wing detection (names differing only by hyphen/underscore)
+    let duplicates = detect_wing_duplicates(&wings.keys().cloned().collect::<Vec<_>>());
+
+    // Last ingest timestamp (from marker file)
+    let last_ingest_ts = read_last_ingest_marker();
+
+    // Discoverable projects (scan ~/code and D:/code for dirs with .memory/)
+    let (discoverable, covered, missing) = discover_project_coverage(&import_wings);
+
+    Ok(HealthReport {
+        total_chunks: total,
+        import_chunks,
+        session_chunks,
+        agent_chunks,
+        wing_count: wings.len(),
+        wings,
+        import_wings,
+        duplicates,
+        last_ingest_ts,
+        discoverable_projects: discoverable,
+        covered_projects: covered,
+        missing_projects: missing,
+        stale_wings: Vec::new(),
+    })
+}
+
+fn detect_wing_duplicates(wing_names: &[String]) -> Vec<Vec<String>> {
+    let mut normalized: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for name in wing_names {
+        let key = name.replace('-', "_").replace('.', "_").to_lowercase();
+        normalized.entry(key).or_default().push(name.clone());
+    }
+    normalized.into_values().filter(|names| names.len() > 1).collect()
+}
+
+fn read_last_ingest_marker() -> Option<i64> {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .ok()?;
+    let marker = std::path::PathBuf::from(home).join(".recall").join("last_ingest");
+    let content = std::fs::read_to_string(marker).ok()?;
+    content.trim().parse().ok()
+}
+
+fn discover_project_coverage(import_wings: &[String]) -> (usize, usize, Vec<String>) {
+    let mut roots = Vec::new();
+
+    // User's home/code directory
+    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+        let home_code = std::path::PathBuf::from(&home).join("code");
+        if home_code.is_dir() {
+            roots.push(home_code);
+        }
+    }
+    // D:/code (Windows multi-drive)
+    let d_code = std::path::PathBuf::from("D:/code");
+    if d_code.is_dir() {
+        roots.push(d_code);
+    }
+
+    let mut discoverable = Vec::new();
+    for root in &roots {
+        if let Ok(entries) = std::fs::read_dir(root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() && path.join(".memory").is_dir() {
+                    let wing_name = path.file_name()
+                        .map(|n| n.to_string_lossy().replace('-', "_").replace('.', ""))
+                        .unwrap_or_default();
+                    if !wing_name.is_empty() {
+                        discoverable.push(wing_name);
+                    }
+                }
+            }
+        }
+    }
+
+    let covered: Vec<&String> = discoverable.iter()
+        .filter(|p| import_wings.contains(p))
+        .collect();
+    let missing: Vec<String> = discoverable.iter()
+        .filter(|p| !import_wings.contains(p))
+        .cloned()
+        .collect();
+
+    (discoverable.len(), covered.len(), missing)
 }
 
 fn cmd_forget(wing: &str, _older_than: Option<&str>) -> Result<i32> {
