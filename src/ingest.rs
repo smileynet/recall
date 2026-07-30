@@ -2,8 +2,22 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use fs2::FileExt;
+use serde_json::Value;
 
 use crate::{embed, scan, store};
+
+// --- Constants (matching Python recall) ---
+
+const CHUNK_SIZE: usize = 800;
+const MIN_CHUNK_SIZE: usize = 30;
+
+const TOPIC_KEYWORDS: &[(&str, &[&str])] = &[
+    ("technical", &["code", "function", "bug", "error", "api", "server", "deploy", "git", "test", "debug", "refactor"]),
+    ("architecture", &["architecture", "design", "pattern", "structure", "interface", "module", "component", "layer"]),
+    ("planning", &["plan", "roadmap", "milestone", "scope", "requirement", "spec", "backlog", "sprint"]),
+    ("decisions", &["decided", "chose", "recommendation", "trade-off", "approach", "option", "prefer", "agree"]),
+    ("problems", &["problem", "issue", "broken", "failed", "crash", "stuck", "workaround", "fix", "solved"]),
+];
 
 /// Default session directory.
 fn default_sessions_dir() -> PathBuf {
@@ -49,14 +63,20 @@ pub fn run_ingest(path: Option<&str>) -> Result<i32> {
     // Phase 3: process changed files
     let mut total_chunks = 0;
     for file_path in &changed {
-        let chunks = chunk_session_file(file_path)?;
+        let messages = parse_session_file(file_path)?;
+        if messages.is_empty() {
+            scan::update_cache(&conn, file_path)?;
+            continue;
+        }
+
+        let chunks = chunk_messages(&messages);
         if chunks.is_empty() {
             scan::update_cache(&conn, file_path)?;
             continue;
         }
 
-        // Determine wing from file content or path
-        let wing = derive_wing(file_path);
+        // Determine wing from session metadata (cwd) or fallback to path
+        let wing = derive_wing_from_session(&dir, file_path);
 
         // Batch embed
         let texts: Vec<&str> = chunks.iter().map(|c| c.as_str()).collect();
@@ -65,7 +85,8 @@ pub fn run_ingest(path: Option<&str>) -> Result<i32> {
         // Store in transaction
         conn.execute("BEGIN IMMEDIATE", [])?;
         for (chunk, embedding) in chunks.iter().zip(embeddings.iter()) {
-            store::insert_chunk(&conn, chunk, &wing, "general", "session",
+            let room = classify_room(chunk);
+            store::insert_chunk(&conn, chunk, &wing, &room, "session",
                 &file_path.to_string_lossy(), embedding)?;
         }
         scan::update_cache(&conn, file_path)?;
@@ -100,7 +121,7 @@ pub fn import_directory(path: &str, wing: &str) -> Result<i32> {
 
         conn.execute("BEGIN IMMEDIATE", [])?;
         for (chunk, embedding) in chunks.iter().zip(embeddings.iter()) {
-            let room = detect_room(&entry);
+            let room = detect_room_from_path(&entry);
             store::insert_chunk(&conn, chunk, wing, &room, "import",
                 &entry.to_string_lossy(), embedding)?;
         }
@@ -112,85 +133,421 @@ pub fn import_directory(path: &str, wing: &str) -> Result<i32> {
     Ok(0)
 }
 
-// --- Chunking ---
+// =============================================================================
+// Session JSONL Parsing (multi-format: v3, v2, codex)
+// =============================================================================
 
-/// Chunk a JSONL session file into text chunks.
-fn chunk_session_file(path: &Path) -> Result<Vec<String>> {
+/// A parsed message with role and text.
+struct Message {
+    role: Role,
+    text: String,
+}
+
+#[derive(PartialEq, Clone, Copy)]
+enum Role {
+    User,
+    Assistant,
+}
+
+/// Parse a session JSONL file, auto-detecting format.
+fn parse_session_file(path: &Path) -> Result<Vec<Message>> {
     let content = std::fs::read_to_string(path)?;
-    let mut chunks = Vec::new();
+    if content.trim().is_empty() {
+        return Ok(Vec::new());
+    }
 
-    for line in content.lines() {
-        if line.trim().is_empty() { continue; }
-        // Extract text content from JSONL (simplified — parse role + content)
-        if let Some(text) = extract_message_text(line) {
-            if text.len() > 50 { // skip trivial messages
-                chunks.push(text);
+    // Try v3 first, then v2, then codex
+    if let Some(msgs) = parse_kiro_v3(&content) {
+        return Ok(msgs);
+    }
+    if let Some(msgs) = parse_kiro_v2(&content) {
+        return Ok(msgs);
+    }
+    if let Some(msgs) = parse_codex(&content) {
+        return Ok(msgs);
+    }
+
+    Ok(Vec::new())
+}
+
+/// Parse kiro-cli v3 JSONL: {id, timestamp, payload: {type: "user"|"assistant", content}}
+fn parse_kiro_v3(content: &str) -> Option<Vec<Message>> {
+    let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+    if lines.is_empty() {
+        return None;
+    }
+
+    // Detect: v3 has payload.type
+    let first: Value = serde_json::from_str(lines[0]).ok()?;
+    if first.get("payload")?.get("type").is_none() {
+        return None;
+    }
+
+    let mut messages = Vec::new();
+    for line in &lines {
+        let entry: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let payload = entry.get("payload")?;
+        let ptype = payload.get("type")?.as_str()?;
+        let text = payload.get("content")?.as_str()?.trim();
+        if text.is_empty() {
+            continue;
+        }
+
+        match ptype {
+            "user" => messages.push(Message { role: Role::User, text: text.to_string() }),
+            "assistant" => {
+                // Merge consecutive assistant messages
+                if let Some(last) = messages.last_mut() {
+                    if last.role == Role::Assistant {
+                        last.text.push('\n');
+                        last.text.push_str(text);
+                        continue;
+                    }
+                }
+                messages.push(Message { role: Role::Assistant, text: text.to_string() });
+            }
+            _ => {}
+        }
+    }
+
+    if messages.len() >= 2 { Some(messages) } else { None }
+}
+
+/// Parse kiro-cli v1/v2 JSONL: {version: "v1", kind: "Prompt"|"AssistantMessage", data: {...}}
+fn parse_kiro_v2(content: &str) -> Option<Vec<Message>> {
+    let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+    if lines.is_empty() {
+        return None;
+    }
+
+    // Detect: v2 has version=v1 and kind field
+    let mut is_v2 = false;
+    for line in lines.iter().take(5) {
+        if let Ok(entry) = serde_json::from_str::<Value>(line) {
+            if entry.get("version").and_then(|v| v.as_str()) == Some("v1")
+                && entry.get("kind").is_some()
+            {
+                is_v2 = true;
+                break;
             }
         }
     }
-    Ok(chunks)
-}
+    if !is_v2 {
+        return None;
+    }
 
-/// Extract message text from a JSONL line (simplified parser).
-fn extract_message_text(line: &str) -> Option<String> {
-    // Look for "content":"..." pattern
-    let content_key = "\"content\":\"";
-    let start = line.find(content_key)? + content_key.len();
-    let rest = &line[start..];
-    // Find the closing quote (handling escaped quotes)
-    let mut end = 0;
-    let mut escaped = false;
-    for (i, ch) in rest.chars().enumerate() {
-        if escaped {
-            escaped = false;
+    let mut messages = Vec::new();
+    for line in &lines {
+        let entry: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if entry.get("version").and_then(|v| v.as_str()) != Some("v1") {
             continue;
         }
-        if ch == '\\' {
-            escaped = true;
-            continue;
-        }
-        if ch == '"' {
-            end = i;
-            break;
+
+        let kind = match entry.get("kind").and_then(|k| k.as_str()) {
+            Some(k) => k,
+            None => continue,
+        };
+        let data = match entry.get("data") {
+            Some(d) => d,
+            None => continue,
+        };
+
+        match kind {
+            "Prompt" => {
+                let mut parts = Vec::new();
+                if let Some(blocks) = data.get("content").and_then(|c| c.as_array()) {
+                    for block in blocks {
+                        if block.get("kind").and_then(|k| k.as_str()) == Some("text") {
+                            if let Some(t) = block.get("data").and_then(|d| d.as_str()) {
+                                let trimmed = t.trim();
+                                if !trimmed.is_empty() {
+                                    parts.push(trimmed.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                if !parts.is_empty() {
+                    messages.push(Message { role: Role::User, text: parts.join("\n") });
+                }
+            }
+            "AssistantMessage" => {
+                let mut text_parts = Vec::new();
+                if let Some(blocks) = data.get("content").and_then(|c| c.as_array()) {
+                    for block in blocks {
+                        let bk = block.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+                        match bk {
+                            "text" => {
+                                if let Some(t) = block.get("data").and_then(|d| d.as_str()) {
+                                    let trimmed = t.trim();
+                                    if !trimmed.is_empty() {
+                                        text_parts.push(trimmed.to_string());
+                                    }
+                                }
+                            }
+                            "toolUse" => {
+                                if let Some(td) = block.get("data") {
+                                    let name = td.get("name")
+                                        .and_then(|n| n.as_str())
+                                        .unwrap_or("unknown");
+                                    let purpose = td.get("input")
+                                        .and_then(|i| i.get("__tool_use_purpose"))
+                                        .and_then(|p| p.as_str())
+                                        .unwrap_or("");
+                                    let summary = if purpose.is_empty() {
+                                        format!("[tool: {}]", name)
+                                    } else {
+                                        format!("[tool: {}] {}", name, purpose)
+                                    };
+                                    text_parts.push(summary);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                let combined = text_parts.join("\n");
+                if !combined.is_empty() {
+                    // Merge consecutive assistant messages
+                    if let Some(last) = messages.last_mut() {
+                        if last.role == Role::Assistant {
+                            last.text.push('\n');
+                            last.text.push_str(&combined);
+                            continue;
+                        }
+                    }
+                    messages.push(Message { role: Role::Assistant, text: combined });
+                }
+            }
+            _ => {}
         }
     }
-    if end == 0 { return None; }
-    let text = &rest[..end];
-    // Unescape basic sequences
-    let unescaped = text.replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\");
-    Some(unescaped)
+
+    if messages.len() >= 2 { Some(messages) } else { None }
 }
 
-/// Chunk markdown by headings (## boundaries).
-fn chunk_markdown(content: &str) -> Vec<String> {
+/// Parse OpenAI Codex CLI JSONL: {type: "event_msg", payload: {type, message}}
+fn parse_codex(content: &str) -> Option<Vec<Message>> {
+    let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+    let mut messages = Vec::new();
+    let mut has_session_meta = false;
+
+    for line in &lines {
+        let entry: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let entry_type = entry.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if entry_type == "session_meta" {
+            has_session_meta = true;
+            continue;
+        }
+        if entry_type != "event_msg" {
+            continue;
+        }
+
+        let payload = match entry.get("payload") {
+            Some(p) => p,
+            None => continue,
+        };
+        let msg = match payload.get("message").and_then(|m| m.as_str()) {
+            Some(m) if !m.trim().is_empty() => m.trim(),
+            _ => continue,
+        };
+        let ptype = payload.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+        match ptype {
+            "user_message" => messages.push(Message { role: Role::User, text: msg.to_string() }),
+            "agent_message" => messages.push(Message { role: Role::Assistant, text: msg.to_string() }),
+            _ => {}
+        }
+    }
+
+    if messages.len() >= 2 && has_session_meta { Some(messages) } else { None }
+}
+
+// =============================================================================
+// Message-pair chunking (matches Python chunker.chunk_messages)
+// =============================================================================
+
+/// Chunk conversation messages into ~CHUNK_SIZE char groups.
+/// User messages are prefixed with "> ", messages joined with newlines.
+/// Chunks smaller than MIN_CHUNK_SIZE are discarded.
+fn chunk_messages(messages: &[Message]) -> Vec<String> {
     let mut chunks = Vec::new();
-    let mut current = String::new();
+    let mut current: Vec<String> = Vec::new();
+    let mut current_len = 0;
 
-    for line in content.lines() {
-        if line.starts_with("## ") && !current.trim().is_empty() {
-            chunks.push(current.trim().to_string());
-            current = String::new();
+    for msg in messages {
+        let line = match msg.role {
+            Role::User => format!("> {}", msg.text),
+            Role::Assistant => msg.text.clone(),
+        };
+
+        if current_len + line.len() > CHUNK_SIZE && !current.is_empty() {
+            chunks.push(current.join("\n"));
+            current.clear();
+            current_len = 0;
         }
-        current.push_str(line);
-        current.push('\n');
+        current_len += line.len();
+        current.push(line);
     }
-    if !current.trim().is_empty() {
-        chunks.push(current.trim().to_string());
+
+    if !current.is_empty() {
+        chunks.push(current.join("\n"));
     }
-    chunks
+
+    chunks.into_iter().filter(|c| c.len() >= MIN_CHUNK_SIZE).collect()
 }
 
-/// Derive a wing name from a file path (project name heuristic).
-fn derive_wing(path: &Path) -> String {
-    // Use parent directory name or "sessions" as default
-    path.parent()
+// =============================================================================
+// Room classification (keyword scoring, matches Python chunker.classify_room)
+// =============================================================================
+
+/// Classify a chunk into a room by keyword scoring.
+fn classify_room(text: &str) -> String {
+    let text_lower = &text[..text.len().min(3000)].to_lowercase();
+    let mut best_room = "general";
+    let mut best_score = 0;
+
+    for &(room, keywords) in TOPIC_KEYWORDS {
+        let score: usize = keywords.iter().filter(|kw| text_lower.contains(*kw)).count();
+        if score > best_score {
+            best_score = score;
+            best_room = room;
+        }
+    }
+
+    best_room.to_string()
+}
+
+// =============================================================================
+// Wing derivation from session metadata
+// =============================================================================
+
+/// Derive wing name from session metadata (cwd field).
+/// Looks for <session_id>.json (v2) or parent/session.json (v3) to find the cwd,
+/// then uses the last path component with hyphens replaced by underscores.
+fn derive_wing_from_session(sessions_dir: &Path, jsonl_path: &Path) -> String {
+    // Try cwd-based derivation
+    if let Some(cwd) = extract_cwd_from_session(sessions_dir, jsonl_path) {
+        let project_name = Path::new(&cwd)
+            .file_name()
+            .map(|n| n.to_string_lossy().replace('-', "_"))
+            .unwrap_or_default();
+        if !project_name.is_empty() {
+            return project_name;
+        }
+    }
+
+    // Fallback: parent directory name
+    jsonl_path.parent()
         .and_then(|p| p.file_name())
-        .map(|n| n.to_string_lossy().to_string())
+        .map(|n| n.to_string_lossy().replace('-', "_"))
         .unwrap_or_else(|| "sessions".to_string())
 }
 
+/// Extract cwd from session JSON metadata.
+/// V2: sessions_dir/<session_id>.json → data.cwd
+/// V3: jsonl is in sess_<id>/messages.jsonl → sess_<id>/session.json → workspacePaths[0]
+fn extract_cwd_from_session(sessions_dir: &Path, jsonl_path: &Path) -> Option<String> {
+    let filename = jsonl_path.file_name()?.to_str()?;
+
+    if filename == "messages.jsonl" {
+        // V3: session dir contains session.json
+        let session_dir = jsonl_path.parent()?;
+        let meta_path = session_dir.join("session.json");
+        if meta_path.exists() {
+            let data: Value = serde_json::from_str(
+                &std::fs::read_to_string(&meta_path).ok()?
+            ).ok()?;
+            let paths = data.get("workspacePaths")?.as_array()?;
+            return paths.first()?.as_str().map(|s| s.to_string());
+        }
+    } else if filename.ends_with(".jsonl") {
+        // V2: look for <session_id>.json alongside the JSONL
+        let session_id = jsonl_path.file_stem()?.to_str()?;
+        let json_path = sessions_dir.join(format!("{}.json", session_id));
+        if json_path.exists() {
+            let data: Value = serde_json::from_str(
+                &std::fs::read_to_string(&json_path).ok()?
+            ).ok()?;
+            return data.get("cwd")?.as_str().map(|s| s.to_string());
+        }
+    }
+
+    None
+}
+
+// =============================================================================
+// Markdown chunking (for import)
+// =============================================================================
+
+/// Chunk markdown by heading boundaries, splitting oversized sections at paragraphs.
+fn chunk_markdown(content: &str) -> Vec<String> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut sections: Vec<Vec<&str>> = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+
+    for line in &lines {
+        if line.starts_with("## ") && !current.is_empty() {
+            sections.push(current);
+            current = vec![line];
+        } else {
+            current.push(line);
+        }
+    }
+    if !current.is_empty() {
+        sections.push(current);
+    }
+
+    let mut chunks = Vec::new();
+    for section in sections {
+        let section_text = section.join("\n");
+        let trimmed = section_text.trim();
+        if trimmed.is_empty() || trimmed.len() < MIN_CHUNK_SIZE {
+            continue;
+        }
+
+        if trimmed.len() <= CHUNK_SIZE {
+            chunks.push(trimmed.to_string());
+        } else {
+            // Split at paragraph boundaries
+            let paragraphs: Vec<&str> = trimmed.split("\n\n").collect();
+            let mut buf: Vec<&str> = Vec::new();
+            let mut buf_len = 0;
+
+            for para in &paragraphs {
+                if buf_len + para.len() > CHUNK_SIZE && !buf.is_empty() {
+                    chunks.push(buf.join("\n\n"));
+                    buf = vec![para];
+                    buf_len = para.len();
+                } else {
+                    buf.push(para);
+                    buf_len += para.len() + 2;
+                }
+            }
+            if !buf.is_empty() {
+                let remainder = buf.join("\n\n");
+                if remainder.len() >= MIN_CHUNK_SIZE {
+                    chunks.push(remainder);
+                }
+            }
+        }
+    }
+
+    chunks
+}
+
 /// Detect room from a markdown file's subdirectory.
-fn detect_room(path: &Path) -> String {
+fn detect_room_from_path(path: &Path) -> String {
     path.parent()
         .and_then(|p| p.file_name())
         .map(|n| n.to_string_lossy().to_string())
