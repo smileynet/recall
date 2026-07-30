@@ -1,0 +1,5 @@
+{"type":"session_meta","payload":{"session_id":"codex-test-001","cwd":"/home/user/project"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"Can you explain how the RRF fusion algorithm works in our search implementation?"}}
+{"type":"event_msg","payload":{"type":"agent_message","message":"RRF (Reciprocal Rank Fusion) combines BM25 and vector search results. For each document, we compute score = 1/(k + bm25_rank) + 1/(k + vector_rank) where k=60. This gives documents that rank highly in both systems the highest combined score."}}
+{"type":"event_msg","payload":{"type":"user_message","message":"What happens when a document only appears in one of the two result sets?"}}
+{"type":"event_msg","payload":{"type":"agent_message","message":"If a document only appears in one set, it only gets that one reciprocal rank contribution. Documents appearing in both always score higher than those in only one, which is the desired behavior for hybrid search."}}

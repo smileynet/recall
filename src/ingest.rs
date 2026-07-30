@@ -262,7 +262,7 @@ struct Message {
     text: String,
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 enum Role {
     User,
     Assistant,
@@ -679,4 +679,236 @@ fn walkdir_md(dir: &Path) -> Vec<PathBuf> {
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
         .map(|e| e.path())
         .collect()
+}
+
+
+// =============================================================================
+// Unit Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- chunk_messages tests ---
+
+    #[test]
+    fn chunk_messages_single_short_message() {
+        let messages = vec![
+            Message { role: Role::User, text: "Hello, how does the scan cache work?".to_string() },
+            Message { role: Role::Assistant, text: "It stores mtime and size per file.".to_string() },
+        ];
+        let chunks = chunk_messages(&messages);
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].starts_with("> Hello"));
+        assert!(chunks[0].contains("It stores mtime"));
+    }
+
+    #[test]
+    fn chunk_messages_splits_at_size_limit() {
+        let messages = vec![
+            Message { role: Role::User, text: "a".repeat(500) },
+            Message { role: Role::Assistant, text: "b".repeat(500) },
+        ];
+        let chunks = chunk_messages(&messages);
+        assert!(chunks.len() >= 2, "should split since total > CHUNK_SIZE (800)");
+    }
+
+    #[test]
+    fn chunk_messages_user_prefixed() {
+        let messages = vec![
+            Message { role: Role::User, text: "user question".to_string() },
+            Message { role: Role::Assistant, text: "assistant answer".to_string() },
+        ];
+        let chunks = chunk_messages(&messages);
+        assert!(chunks[0].contains("> user question"));
+        assert!(chunks[0].contains("assistant answer"));
+        assert!(!chunks[0].contains("> assistant answer"));
+    }
+
+    #[test]
+    fn chunk_messages_discards_tiny_chunks() {
+        let messages = vec![
+            Message { role: Role::User, text: "hi".to_string() },
+        ];
+        let chunks = chunk_messages(&messages);
+        assert!(chunks.is_empty(), "chunk '> hi' is < MIN_CHUNK_SIZE (30)");
+    }
+
+    #[test]
+    fn chunk_messages_empty_input() {
+        let chunks = chunk_messages(&[]);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn chunk_messages_many_small_messages_accumulate() {
+        let messages: Vec<Message> = (0..20).map(|i| Message {
+            role: if i % 2 == 0 { Role::User } else { Role::Assistant },
+            text: format!("Message number {} with some content here", i),
+        }).collect();
+        let chunks = chunk_messages(&messages);
+        // 20 messages × ~40 chars = ~800 chars, should produce 1-2 chunks
+        assert!(!chunks.is_empty());
+        assert!(chunks.len() <= 3);
+    }
+
+    // --- parse format detection tests ---
+
+    #[test]
+    fn parse_kiro_v3_valid() {
+        let content = r#"{"id":"1","timestamp":"2026-07-20T10:00:00Z","payload":{"type":"user","content":"hello world"}}
+{"id":"2","timestamp":"2026-07-20T10:00:05Z","payload":{"type":"assistant","content":"hi there, this is a response with enough content to matter"}}"#;
+        let messages = parse_kiro_v3(content);
+        assert!(messages.is_some());
+        let msgs = messages.unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, Role::User);
+        assert_eq!(msgs[1].role, Role::Assistant);
+    }
+
+    #[test]
+    fn parse_kiro_v3_rejects_non_v3() {
+        let content = r#"{"role":"user","content":"not v3 format"}"#;
+        assert!(parse_kiro_v3(content).is_none());
+    }
+
+    #[test]
+    fn parse_kiro_v3_merges_consecutive_assistant() {
+        let content = r#"{"id":"1","timestamp":"t","payload":{"type":"user","content":"question here with enough text to be meaningful"}}
+{"id":"2","timestamp":"t","payload":{"type":"assistant","content":"first part of the answer"}}
+{"id":"3","timestamp":"t","payload":{"type":"assistant","content":"second part of the answer"}}"#;
+        let msgs = parse_kiro_v3(content).unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert!(msgs[1].text.contains("first part"));
+        assert!(msgs[1].text.contains("second part"));
+    }
+
+    #[test]
+    fn parse_kiro_v2_valid() {
+        let content = r#"{"version":"v1","kind":"Prompt","data":{"content":[{"kind":"text","data":"What is the architecture?"}]}}
+{"version":"v1","kind":"AssistantMessage","data":{"content":[{"kind":"text","data":"The architecture uses a layered approach with SQLite for persistence."}]}}"#;
+        let messages = parse_kiro_v2(content);
+        assert!(messages.is_some());
+        let msgs = messages.unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert!(msgs[0].text.contains("architecture"));
+    }
+
+    #[test]
+    fn parse_kiro_v2_summarizes_tool_use() {
+        let content = r#"{"version":"v1","kind":"Prompt","data":{"content":[{"kind":"text","data":"Read the file and tell me what is in it please"}]}}
+{"version":"v1","kind":"AssistantMessage","data":{"content":[{"kind":"toolUse","data":{"name":"read","input":{"__tool_use_purpose":"Read config file"}}},{"kind":"text","data":"The file contains configuration settings for the project build system."}]}}"#;
+        let msgs = parse_kiro_v2(content).unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert!(msgs[1].text.contains("[tool: read]"));
+        assert!(msgs[1].text.contains("Read config file"));
+    }
+
+    #[test]
+    fn parse_codex_valid() {
+        let content = r#"{"type":"session_meta","payload":{"session_id":"test"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"Explain the RRF algorithm used for combining search results together"}}
+{"type":"event_msg","payload":{"type":"agent_message","message":"RRF combines ranked lists by computing reciprocal rank scores and summing them per document"}}"#;
+        let messages = parse_codex(content);
+        assert!(messages.is_some());
+        let msgs = messages.unwrap();
+        assert_eq!(msgs.len(), 2);
+    }
+
+    #[test]
+    fn parse_codex_requires_session_meta() {
+        let content = r#"{"type":"event_msg","payload":{"type":"user_message","message":"hello there friend"}}
+{"type":"event_msg","payload":{"type":"agent_message","message":"hi back to you friend"}}"#;
+        assert!(parse_codex(content).is_none(), "codex format requires session_meta");
+    }
+
+    // --- classify_room tests ---
+
+    #[test]
+    fn classify_room_technical() {
+        assert_eq!(classify_room("The bug in the API server caused a deployment error"), "technical");
+    }
+
+    #[test]
+    fn classify_room_architecture() {
+        assert_eq!(classify_room("The architecture uses a layered design pattern with module interfaces"), "architecture");
+    }
+
+    #[test]
+    fn classify_room_decisions() {
+        assert_eq!(classify_room("We decided to chose this approach as our recommendation"), "decisions");
+    }
+
+    #[test]
+    fn classify_room_general_fallback() {
+        assert_eq!(classify_room("The weather is nice today and I like cats"), "general");
+    }
+
+    #[test]
+    fn classify_room_highest_score_wins() {
+        // "architecture" keywords: architecture, design, pattern, structure
+        // "technical" keywords: code, function, bug, error
+        let text = "The architecture design pattern and structure of this module is important";
+        assert_eq!(classify_room(text), "architecture");
+    }
+
+    #[test]
+    fn classify_room_utf8_safe() {
+        let text = "│".repeat(1000) + " some code with a bug in the api";
+        // Should not panic on multi-byte content
+        let room = classify_room(&text);
+        assert!(!room.is_empty());
+    }
+
+    // --- chunk_markdown tests ---
+
+    #[test]
+    fn chunk_markdown_splits_at_headings() {
+        let content = "# Title\nSome intro text that is long enough to be a chunk.\n\n## Section One\nContent for section one is here.\n\n## Section Two\nContent for section two is here.";
+        let chunks = chunk_markdown(content);
+        assert!(chunks.len() >= 2);
+    }
+
+    #[test]
+    fn chunk_markdown_drops_tiny_sections() {
+        let content = "## A\nhi\n\n## B\nThis section has enough content to survive the minimum size filter.";
+        let chunks = chunk_markdown(content);
+        // "hi" is < MIN_CHUNK_SIZE, should be dropped
+        assert!(chunks.iter().all(|c| c.len() >= MIN_CHUNK_SIZE));
+    }
+
+    #[test]
+    fn chunk_markdown_splits_oversized_at_paragraphs() {
+        let long_para = "word ".repeat(200); // ~1000 chars
+        let content = format!("## Big Section\n{}\n\n{}", long_para, long_para);
+        let chunks = chunk_markdown(&content);
+        assert!(chunks.len() >= 2, "oversized section should split at paragraph boundary");
+    }
+
+    #[test]
+    fn chunk_markdown_empty_input() {
+        let chunks = chunk_markdown("");
+        assert!(chunks.is_empty());
+    }
+
+    // --- detect_type_from_frontmatter tests ---
+
+    #[test]
+    fn frontmatter_extracts_type() {
+        let content = "---\ntitle: Test\ntype: decision\n---\n# Content";
+        assert_eq!(detect_type_from_frontmatter(content), "decision");
+    }
+
+    #[test]
+    fn frontmatter_defaults_to_document() {
+        let content = "# No frontmatter here\nJust content.";
+        assert_eq!(detect_type_from_frontmatter(content), "document");
+    }
+
+    #[test]
+    fn frontmatter_handles_bom() {
+        let content = "\u{feff}---\ntype: spec\n---\n# Spec";
+        assert_eq!(detect_type_from_frontmatter(content), "spec");
+    }
 }

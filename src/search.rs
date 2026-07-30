@@ -64,3 +64,48 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
     }
     dot / (norm_a * norm_b)
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cosine_identical_vectors() {
+        let v = vec![1.0, 2.0, 3.0];
+        let sim = cosine_similarity(&v, &v);
+        assert!((sim - 1.0).abs() < 1e-6, "identical vectors should have similarity 1.0");
+    }
+
+    #[test]
+    fn cosine_orthogonal_vectors() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![0.0, 1.0, 0.0];
+        let sim = cosine_similarity(&a, &b);
+        assert!(sim.abs() < 1e-6, "orthogonal vectors should have similarity 0.0");
+    }
+
+    #[test]
+    fn cosine_opposite_vectors() {
+        let a = vec![1.0, 0.0];
+        let b = vec![-1.0, 0.0];
+        let sim = cosine_similarity(&a, &b);
+        assert!((sim + 1.0).abs() < 1e-6, "opposite vectors should have similarity -1.0");
+    }
+
+    #[test]
+    fn cosine_zero_vector() {
+        let a = vec![1.0, 2.0, 3.0];
+        let zero = vec![0.0, 0.0, 0.0];
+        assert_eq!(cosine_similarity(&a, &zero), 0.0);
+        assert_eq!(cosine_similarity(&zero, &a), 0.0);
+    }
+
+    #[test]
+    fn cosine_similar_vectors_high_score() {
+        let a = vec![1.0, 1.0, 0.0];
+        let b = vec![1.0, 1.0, 0.1]; // very close to a
+        let sim = cosine_similarity(&a, &b);
+        assert!(sim > 0.95, "nearly identical vectors should have high similarity: {}", sim);
+    }
+}

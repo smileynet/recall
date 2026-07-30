@@ -127,3 +127,48 @@ impl Embedder {
         Ok(results)
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_name_bge_base_variants() {
+        assert_eq!(Model::from_name("bge-base-en-v1.5"), Some(Model::BgeBase));
+        assert_eq!(Model::from_name("bge-base"), Some(Model::BgeBase));
+        assert_eq!(Model::from_name("base"), Some(Model::BgeBase));
+    }
+
+    #[test]
+    fn from_name_bge_small_variants() {
+        assert_eq!(Model::from_name("bge-small-en-v1.5"), Some(Model::BgeSmall));
+        assert_eq!(Model::from_name("bge-small"), Some(Model::BgeSmall));
+        assert_eq!(Model::from_name("small"), Some(Model::BgeSmall));
+    }
+
+    #[test]
+    fn from_name_case_insensitive() {
+        assert_eq!(Model::from_name("BGE-BASE"), Some(Model::BgeBase));
+        assert_eq!(Model::from_name("Bge-Small"), Some(Model::BgeSmall));
+    }
+
+    #[test]
+    fn from_name_invalid() {
+        assert_eq!(Model::from_name("nonexistent"), None);
+        assert_eq!(Model::from_name(""), None);
+        assert_eq!(Model::from_name("bge-large"), None);
+    }
+
+    #[test]
+    fn model_dimensions() {
+        assert_eq!(Model::BgeBase.dimensions(), 768);
+        assert_eq!(Model::BgeSmall.dimensions(), 384);
+    }
+
+    #[test]
+    fn model_name_roundtrip() {
+        assert_eq!(Model::from_name(Model::BgeBase.name()), Some(Model::BgeBase));
+        assert_eq!(Model::from_name(Model::BgeSmall.name()), Some(Model::BgeSmall));
+    }
+}

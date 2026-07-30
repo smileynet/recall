@@ -85,10 +85,10 @@ fn test_ingest_from_fixtures() {
 
     let fixtures = fixtures_dir();
 
-    // Scan should find both fixture files as "changed" (no prior cache)
+    // Scan should find fixture JSONL files as "changed" (no prior cache)
     let changed = scan::scan_for_changes(&fixtures, &conn)
         .expect("scan_for_changes failed");
-    assert_eq!(changed.len(), 2, "should detect 2 fixture files as new");
+    assert_eq!(changed.len(), 3, "should detect 3 fixture JSONL files as new");
 
     // Manually ingest: read each file, chunk, embed, store (mirrors ingest.rs logic)
     let mut total_chunks = 0;
@@ -185,7 +185,7 @@ fn test_scan_cache_hit_miss() {
     // First scan: all files should be detected as changed (cache miss)
     let first_scan = scan::scan_for_changes(&fixtures, &conn)
         .expect("first scan failed");
-    assert_eq!(first_scan.len(), 2, "first scan should detect all files as new");
+    assert_eq!(first_scan.len(), 3, "first scan should detect all JSONL files as new");
 
     // Update cache for all detected files
     for path in &first_scan {

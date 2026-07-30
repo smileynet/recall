@@ -344,3 +344,58 @@ struct SourceRow {
     created_at: String,
     title: Option<String>,
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_iso8601_standard_with_offset() {
+        let epoch = parse_iso8601_to_epoch("2026-07-14T08:46:52-0700");
+        assert!(epoch.is_some());
+        // 2026-07-14 08:46:52 -0700 = 2026-07-14 15:46:52 UTC
+        let val = epoch.unwrap();
+        assert!(val > 1_783_000_000, "should be a reasonable epoch value: {}", val);
+    }
+
+    #[test]
+    fn parse_iso8601_with_colon_offset() {
+        let epoch = parse_iso8601_to_epoch("2026-07-14T08:46:52-07:00");
+        assert!(epoch.is_some());
+    }
+
+    #[test]
+    fn parse_iso8601_z_suffix() {
+        let epoch = parse_iso8601_to_epoch("2026-07-14T08:46:52Z");
+        assert!(epoch.is_some());
+    }
+
+    #[test]
+    fn parse_iso8601_no_timezone() {
+        // Treated as UTC
+        let epoch = parse_iso8601_to_epoch("2026-07-14T08:46:52");
+        assert!(epoch.is_some());
+    }
+
+    #[test]
+    fn parse_iso8601_short_string_returns_none() {
+        assert!(parse_iso8601_to_epoch("2026").is_none());
+        assert!(parse_iso8601_to_epoch("").is_none());
+    }
+
+    #[test]
+    fn parse_tz_offset_values() {
+        assert_eq!(parse_tz_offset("+0700"), 25200); // 7*3600
+        assert_eq!(parse_tz_offset("-0700"), -25200);
+        assert_eq!(parse_tz_offset("+07:00"), 25200);
+        assert_eq!(parse_tz_offset("Z"), 0);
+        assert_eq!(parse_tz_offset(""), 0);
+    }
+
+    #[test]
+    fn parse_created_at_returns_zero_for_garbage() {
+        assert_eq!(parse_created_at("not a date"), 0);
+        assert_eq!(parse_created_at(""), 0);
+    }
+}

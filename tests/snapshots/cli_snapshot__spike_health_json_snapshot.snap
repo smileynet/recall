@@ -1,0 +1,71 @@
+---
+source: tests/cli_snapshot.rs
+info:
+  program: recall
+  args:
+    - health
+    - "--json"
+  env:
+    RECALL_DB: "C:\\Users\\uosmi\\AppData\\Local\\Temp\\.tmppfJhGU\\test.sqlite3"
+---
+success: true
+exit_code: 0
+----- stdout -----
+{
+  "total_chunks": 0,
+  "import_chunks": 0,
+  "session_chunks": 0,
+  "agent_chunks": 0,
+  "wing_count": 0,
+  "wings": {},
+  "import_wings": [],
+  "duplicates": [],
+  "last_ingest_ts": 1785445265,
+  "discoverable_projects": 40,
+  "covered_projects": 0,
+  "missing_projects": [
+    "audio_helper",
+    "crew_research",
+    "game_design_salon",
+    "game_research",
+    "game_slicer",
+    "lacrosse_bosse",
+    "lacrosse_bosse_agentic",
+    "rustacean_academy",
+    "sci_phoenix",
+    "stormworks_station",
+    "system_health",
+    "abiotic_factor_re",
+    "archwright",
+    "asset_production",
+    "bigg_pi",
+    "blender_plugins",
+    "disco_elysium_re",
+    "ebb_analyzer",
+    "game_design_salon",
+    "game_slicer",
+    "game_workshop",
+    "hunter_manager",
+    "kc2_mods",
+    "kc2_mods_manager",
+    "kc2_ui_workshop",
+    "model_training",
+    "neon_nights_analyzer",
+    "pinoy_prints",
+    "pixelrig",
+    "recall",
+    "sci_phoenix",
+    "shader_library",
+    "shadowrun_sega",
+    "shadowrun_snes",
+    "skald2_re",
+    "softswerve",
+    "tarkies_tester",
+    "tkt",
+    "vam_slicer",
+    "zero_parades_re"
+  ],
+  "stale_wings": []
+}
+
+----- stderr -----

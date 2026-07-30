@@ -1,0 +1,16 @@
+---
+source: tests/cli_snapshot.rs
+info:
+  program: recall
+  args:
+    - search
+    - nonexistent query
+  env:
+    RECALL_DB: "C:\\Users\\uosmi\\AppData\\Local\\Temp\\.tmpDhDjiJ\\test.sqlite3"
+---
+success: true
+exit_code: 0
+----- stdout -----
+No results found.
+
+----- stderr -----

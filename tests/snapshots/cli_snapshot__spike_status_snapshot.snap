@@ -1,0 +1,17 @@
+---
+source: tests/cli_snapshot.rs
+info:
+  program: recall
+  args:
+    - status
+  env:
+    RECALL_DB: "C:\\Users\\uosmi\\AppData\\Local\\Temp\\.tmpwmZkYX\\test.sqlite3"
+---
+success: true
+exit_code: 0
+----- stdout -----
+
+  Recall — [N] drawers
+
+
+----- stderr -----

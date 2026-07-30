@@ -1,0 +1,4 @@
+{"id":"msg-001","timestamp":"2026-07-20T10:00:00Z","payload":{"type":"user","content":"How should we handle the database migration from Python to Rust?"}}
+{"id":"msg-002","timestamp":"2026-07-20T10:00:05Z","payload":{"type":"assistant","content":"We should copy the text content and re-embed with the same model. The Python DB uses bge-base-en-v1.5 which matches our Rust implementation."}}
+{"id":"msg-003","timestamp":"2026-07-20T10:01:00Z","payload":{"type":"user","content":"What about the scan cache entries?"}}
+{"id":"msg-004","timestamp":"2026-07-20T10:01:10Z","payload":{"type":"assistant","content":"The sources table maps to our scan_cache. We can migrate path, content_hash, and file_size directly. The last_indexed_at becomes our mtime approximation."}}
