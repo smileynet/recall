@@ -1,7 +1,7 @@
 ---
 id: 14
 title: "Update crew-research: replace Python recall references with Rust binary"
-status: open
+status: done
 priority: normal
 blocked_by: [13]
 estimate: 1h
