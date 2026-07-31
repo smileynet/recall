@@ -54,6 +54,9 @@ pub fn run_migrate(source_path: &str, batch_embed: bool) -> Result<()> {
     store::set_meta(&dst_conn, "embedding_model", crate::embed::DEFAULT_MODEL.name())?;
     store::set_meta(&dst_conn, "embedding_dim", &crate::embed::DEFAULT_MODEL.dimensions().to_string())?;
 
+    // Checkpoint WAL — migration writes large amounts of data
+    dst_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+
     let stats = store::corpus_stats(&dst_conn)?;
     eprintln!("\n  Done: {} chunks in {} wings", stats.total_chunks, stats.wings.len());
     Ok(())

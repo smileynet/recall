@@ -331,6 +331,17 @@ pub fn delete_chunks_by_source(conn: &Connection, source: &str) -> Result<usize>
     Ok(deleted)
 }
 
+/// Delete chunks by source key prefix (LIKE 'prefix%').
+pub fn delete_chunks_by_source_prefix(conn: &Connection, prefix: &str) -> Result<usize> {
+    let pattern = format!("{}%", prefix);
+    conn.execute(
+        "DELETE FROM fts_chunks WHERE rowid IN (SELECT id FROM chunks WHERE source LIKE ?1)",
+        params![pattern],
+    )?;
+    let deleted = conn.execute("DELETE FROM chunks WHERE source LIKE ?1", params![pattern])?;
+    Ok(deleted)
+}
+
 // --- Types ---
 
 #[derive(Debug, Clone)]

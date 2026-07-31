@@ -24,13 +24,14 @@ fn no_subcommand_shows_help() {
 }
 
 #[test]
-fn add_missing_wing_arg() {
+fn add_without_wing_uses_cwd() {
     let mut cmd = recall_cmd();
     with_empty_db(&mut cmd);
+    // --wing is optional now (auto-detects from cwd), so this should succeed
     cmd.args(["add", "some fact"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("--wing"));
+        .success()
+        .stdout(predicate::str::contains("Stored in"));
 }
 
 #[test]

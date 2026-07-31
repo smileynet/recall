@@ -6,7 +6,7 @@ info:
     - health
     - "--json"
   env:
-    RECALL_DB: "C:\\Users\\uosmi\\AppData\\Local\\Temp\\.tmppfJhGU\\test.sqlite3"
+    RECALL_DB: "C:\\Users\\uosmi\\AppData\\Local\\Temp\\.tmpCuiPt7\\test.sqlite3"
 ---
 success: true
 exit_code: 0
@@ -20,19 +20,14 @@ exit_code: 0
   "wings": {},
   "import_wings": [],
   "duplicates": [],
-  "last_ingest_ts": 1785445265,
-  "discoverable_projects": 40,
+  "last_ingest_ts": 1785460728,
+  "discoverable_projects": 36,
   "covered_projects": 0,
   "missing_projects": [
     "audio_helper",
-    "crew_research",
-    "game_design_salon",
-    "game_research",
     "game_slicer",
-    "lacrosse_bosse",
-    "lacrosse_bosse_agentic",
+    "lacrosse_bosse_project",
     "rustacean_academy",
-    "sci_phoenix",
     "stormworks_station",
     "system_health",
     "abiotic_factor_re",
@@ -55,6 +50,7 @@ exit_code: 0
     "pixelrig",
     "recall",
     "sci_phoenix",
+    "seamless_clone",
     "shader_library",
     "shadowrun_sega",
     "shadowrun_snes",

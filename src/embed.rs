@@ -84,6 +84,18 @@ pub fn check_model_mismatch(conn: &rusqlite::Connection) -> Model {
     model
 }
 
+/// Stable model cache directory: ~/.recall/models/
+/// Respects FASTEMBED_CACHE_DIR env var as override.
+fn model_cache_dir() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("FASTEMBED_CACHE_DIR") {
+        return std::path::PathBuf::from(dir);
+    }
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(home).join(".recall").join("models")
+}
+
 /// Embedding model wrapper — loads once, reuses for batch operations.
 pub struct Embedder {
     model: TextEmbedding,
@@ -98,8 +110,10 @@ impl Embedder {
 
     /// Load a specific model.
     pub fn with_model(which: Model) -> Result<Self> {
+        let cache_dir = model_cache_dir();
         let model = TextEmbedding::try_new(
             InitOptions::new(which.fastembed_model())
+                .with_cache_dir(cache_dir)
                 .with_show_download_progress(true)
         )?;
         Ok(Embedder { model, which })

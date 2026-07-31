@@ -4,7 +4,7 @@ use anyhow::Result;
 use recall::{store, search, ingest, embed, migrate};
 
 #[derive(Parser)]
-#[command(name = "recall", about = "Cross-session semantic memory for AI coding assistants")]
+#[command(name = "recall", version, about = "Cross-session semantic memory for AI coding assistants")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -23,8 +23,9 @@ enum Commands {
     /// Store a fact (agent write-back)
     Add {
         content: String,
+        /// Wing name (default: auto-detect from cwd)
         #[arg(long)]
-        wing: String,
+        wing: Option<String>,
         #[arg(long, default_value = "general")]
         room: String,
         #[arg(long, default_value = "fact")]
@@ -40,6 +41,9 @@ enum Commands {
         path: String,
         #[arg(long)]
         wing: String,
+        /// Delete existing imports and reimport from scratch
+        #[arg(long)]
+        force: bool,
     },
     /// Session start payload (recent facts + top results)
     Prime {
@@ -76,9 +80,12 @@ pub fn run() -> i32 {
     let cli = Cli::parse();
     let result = match cli.command {
         Commands::Search { query, wing, results } => cmd_search(&query, wing.as_deref(), results),
-        Commands::Add { content, wing, room, r#type } => cmd_add(&content, &wing, &room, &r#type),
+        Commands::Add { content, wing, room, r#type } => {
+            let resolved_wing = wing.unwrap_or_else(wing_from_cwd);
+            cmd_add(&content, &resolved_wing, &room, &r#type)
+        }
         Commands::Ingest { path } => cmd_ingest(path.as_deref()),
-        Commands::Import { path, wing } => cmd_import(&path, &wing),
+        Commands::Import { path, wing, force } => cmd_import(&path, &wing, force),
         Commands::Prime { wing } => cmd_prime(wing.as_deref()),
         Commands::Status => cmd_status(),
         Commands::Health { json } => cmd_health(json),
@@ -92,6 +99,14 @@ pub fn run() -> i32 {
             1
         }
     }
+}
+
+/// Derive wing name from current working directory.
+fn wing_from_cwd() -> String {
+    std::env::current_dir()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().replace('-', "_")))
+        .unwrap_or_else(|| "global".to_string())
 }
 
 fn cmd_search(query: &str, wing: Option<&str>, max_results: usize) -> Result<i32> {
@@ -136,8 +151,8 @@ fn cmd_ingest(path: Option<&str>) -> Result<i32> {
     ingest::run_ingest(path)
 }
 
-fn cmd_import(path: &str, wing: &str) -> Result<i32> {
-    ingest::import_directory(path, wing)
+fn cmd_import(path: &str, wing: &str, force: bool) -> Result<i32> {
+    ingest::import_directory(path, wing, force)
 }
 
 fn cmd_prime(wing_arg: Option<&str>) -> Result<i32> {

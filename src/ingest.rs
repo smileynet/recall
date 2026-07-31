@@ -19,6 +19,32 @@ const TOPIC_KEYWORDS: &[(&str, &[&str])] = &[
     ("problems", &["problem", "issue", "broken", "failed", "crash", "stuck", "workaround", "fix", "solved"]),
 ];
 
+/// Write unix timestamp to ~/.recall/last_ingest after successful ingest.
+fn write_last_ingest_marker() {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+    let marker = PathBuf::from(home).join(".recall").join("last_ingest");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let _ = std::fs::write(&marker, now.to_string());
+}
+
+/// Check if a file was modified less than 5 minutes ago (likely still being written).
+fn is_active_file(path: &Path) -> bool {
+    const ACTIVE_THRESHOLD_SECS: u64 = 300; // 5 minutes
+    if let Ok(meta) = std::fs::metadata(path) {
+        if let Ok(modified) = meta.modified() {
+            if let Ok(age) = std::time::SystemTime::now().duration_since(modified) {
+                return age.as_secs() < ACTIVE_THRESHOLD_SECS;
+            }
+        }
+    }
+    false
+}
+
 /// Default session directory.
 fn default_sessions_dir() -> PathBuf {
     let home = std::env::var("USERPROFILE")
@@ -62,7 +88,14 @@ pub fn run_ingest(path: Option<&str>) -> Result<i32> {
 
     // Phase 3: process changed files
     let mut total_chunks = 0;
+    let mut files_deferred = 0;
     for file_path in &changed {
+        // Skip files modified less than 5 minutes ago (likely still being written)
+        if is_active_file(file_path) {
+            files_deferred += 1;
+            continue;
+        }
+
         let messages = parse_session_file(file_path)?;
         if messages.is_empty() {
             scan::update_cache(&conn, file_path)?;
@@ -99,21 +132,45 @@ pub fn run_ingest(path: Option<&str>) -> Result<i32> {
     if total_chunks > 0 {
         store::set_meta(&conn, "embedding_model", embedder.model().name())?;
         store::set_meta(&conn, "embedding_dim", &embedder.dimensions().to_string())?;
+        // Checkpoint WAL after large batch
+        if total_chunks > 100 {
+            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        }
     }
 
-    eprintln!("  Done: {} files, {} chunks ingested", changed.len(), total_chunks);
+    eprintln!("  Done: {} files, {} chunks ingested{}", changed.len(), total_chunks,
+        if files_deferred > 0 { format!(" ({} deferred — active)", files_deferred) } else { String::new() });
+
+    // Write staleness marker
+    if total_chunks > 0 {
+        write_last_ingest_marker();
+    }
+
     Ok(0)
 }
 
 /// Import markdown files from a directory into a wing.
 /// Uses SHA-256 content hashing to skip unchanged files on re-import.
-pub fn import_directory(path: &str, wing: &str) -> Result<i32> {
+pub fn import_directory(path: &str, wing: &str, force: bool) -> Result<i32> {
     let dir = Path::new(path);
     if !dir.is_dir() {
         anyhow::bail!("not a directory: {}", path);
     }
 
     let conn = store::open_db()?;
+
+    // --force: delete all existing import chunks and manifest entries for this wing
+    if force {
+        let deleted = store::delete_chunks_by_source_prefix(&conn, &format!("import:{}:", wing))?;
+        // Clear manifest
+        for src in store::get_import_sources_for_wing(&conn, wing)? {
+            store::delete_import_source(&conn, &src, wing)?;
+        }
+        if deleted > 0 {
+            eprintln!("  Force: deleted {} existing import chunks for wing '{}'", deleted, wing);
+        }
+    }
+
     let embedder = embed::Embedder::new()?;
 
     let md_files = walkdir_md(dir);
@@ -227,6 +284,10 @@ pub fn import_directory(path: &str, wing: &str) -> Result<i32> {
     if total_chunks > 0 {
         store::set_meta(&conn, "embedding_model", embedder.model().name())?;
         store::set_meta(&conn, "embedding_dim", &embedder.dimensions().to_string())?;
+        // Checkpoint WAL after large batch
+        if total_chunks > 100 {
+            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        }
     }
 
     println!("  Done: {} ({} chunks indexed)", summary, total_chunks);
