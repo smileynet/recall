@@ -3,38 +3,47 @@ id: 12
 title: "Replace Windows scheduled task with direct Rust binary"
 status: open
 priority: high
-blocked_by: [11]
+blocked_by: [11, 17, 22]
 estimate: 30min
 ---
 
 # Replace Scheduled Task
 
-## What to build
+## Installation (from spike #021)
 
-Replace the current PowerShell wrapper (`Invoke-RecallIngestAll.ps1`) with a direct
-binary invocation. The Rust binary handles its own locking and error reporting.
+1. Copy `D:\code\recall\target\release\recall.exe` to `~/.cargo/bin/recall.exe`
+2. This shadows the Python shim at `~/.local/bin/recall.exe` (cargo/bin is earlier in PATH)
+3. Verify: `where recall` → `C:\Users\uosmi\.cargo\bin\recall.exe`
 
-### New scheduled task
+## New scheduled task
 
 ```powershell
-$action = New-ScheduledTaskAction -Execute "D:\code\recall\target\release\recall.exe" -Argument "ingest"
-$trigger = New-ScheduledTaskTrigger -Once -At "00:00" -RepetitionInterval (New-TimeSpan -Minutes 30)
-$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 1)
-Register-ScheduledTask -TaskName "RecallIngest-Rust" -Action $action -Trigger $trigger -Settings $settings
+$RecallExe = "$env:USERPROFILE\.cargo\bin\recall.exe"
+$Action = New-ScheduledTaskAction -Execute $RecallExe -Argument "ingest"
+$Trigger = New-ScheduledTaskTrigger -Once -At "00:00" `
+    -RepetitionInterval (New-TimeSpan -Minutes 30) `
+    -RepetitionDuration ([TimeSpan]::MaxValue)
+$Settings = New-ScheduledTaskSettingsSet `
+    -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable -MultipleInstances IgnoreNew `
+    -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+
+Register-ScheduledTask -TaskName "RecallIngest" -Action $Action `
+    -Trigger $Trigger -Settings $Settings -Force
 ```
 
-### Import all projects
+## Cleanup
 
-Also schedule or run once: `recall import <path> --wing <name>` for all projects with .memory/ dirs.
-
-### Cleanup
-
-- Disable legacy `RecallIngest` and `Recall-Ingest` tasks
-- Remove Python profile hook from $PROFILE (or update it to call Rust binary)
+- The above `-Force` flag replaces the existing `RecallIngest` task
+- Disable `Recall-Ingest` in `\CrewResearch\` path (legacy):
+  ```powershell
+  Disable-ScheduledTask -TaskName "Recall-Ingest" -TaskPath "\CrewResearch\"
+  ```
 
 ## Acceptance criteria
 
-- [ ] New scheduled task registered and running every 30 minutes
-- [ ] Legacy tasks disabled
-- [ ] `recall health --json` shows `last_ingest_ts` updating
-- [ ] No Python/uv/venv dependencies in the task
+- [ ] Rust binary installed to ~/.cargo/bin/recall.exe
+- [ ] `recall --version` shows Rust version (not Python 0.2.0)
+- [ ] New scheduled task registered (30 min interval)
+- [ ] Legacy task disabled
+- [ ] `recall health --json` shows `last_ingest_ts` updating after task fires

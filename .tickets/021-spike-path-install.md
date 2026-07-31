@@ -1,7 +1,7 @@
 ---
 id: 21
 title: "Spike: verify Rust binary PATH installation on Windows"
-status: open
+status: done
 priority: high
 type: spike
 blocked_by: []

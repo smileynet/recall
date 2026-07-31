@@ -1,7 +1,7 @@
 ---
 id: 15
 title: "Spike: verify doctor.sh compatibility with Rust health --json"
-status: open
+status: done
 priority: high
 type: spike
 blocked_by: []

@@ -3,37 +3,46 @@ id: 17
 title: "Add missing CLI flags required for local deployment"
 status: open
 priority: high
-blocked_by: [16]
+blocked_by: []
 estimate: 1h
 ---
 
 # Missing CLI Flags for Deployment
 
-## What to build
+Based on spike #016 comparison of Python vs Rust CLI.
 
-Based on spike #016 findings, implement the flags needed for crew-research compatibility.
+## Must-have (blocks deployment)
 
-### Must-have (blocks deployment)
+1. **`--version` flag** — `recall --version` → `recall 0.1.0`
+   - clap: add `#[command(version)]` to the Cli struct
+   - Scripts and steering check this
 
-1. **`--version`** — `recall --version` → `recall 0.1.0` (clap derive: `#[command(version)]`)
-2. **Active-file skip** — during ingest, skip files with mtime < 5 minutes ago (in-progress sessions)
-3. **`--force` on import** — delete all existing import chunks for the wing, then re-import
+2. **`import --force`** — delete existing imports for the wing, then re-import
+   - Python: deletes all `import:%` source chunks for the wing, then reimports
+   - Use: `recall import .memory/ --wing X --force`
 
-### Should-have (improves experience)
+## Should-have (improves agent workflow)
 
-4. **`--project` on ingest** — filter sessions to only those from a specific project cwd
-5. **`--room` on search** — filter search results by room
-6. **`--type` on search** — filter search results by type (decision, fact, etc.)
-7. **Wing normalization** on add/search — hyphens → underscores (prevent split wings)
+3. **`add --wing` optional** — auto-detect from cwd when not provided
+   - Python: `Path.cwd().name.replace('-', '_')`
+   - Agent write-back (`recall add "fact" --type decision`) shouldn't require --wing
 
-### Nice-to-have (defer)
+4. **Active-file skip during ingest** — skip JSONL files with mtime < 5 minutes ago
+   - Prevents ingesting sessions that are still being written
+   - Simple: `if age_seconds < 300 { continue; }`
 
-8. `recall gc --older-than 90d` — time-based cleanup
-9. Auto-import .memory/ after ingest
+## Low priority (defer to post-deployment)
+
+- `search --room`, `search --type` — rarely used filters
+- `ingest --project` — scoped ingest (scheduled task doesn't use it)
+- `forget --dry-run`, `forget --yes` — Rust version doesn't prompt so less needed
+- `gc` command — `forget` covers basic cleanup
+- `health --projects-root` — defaults work fine
 
 ## Acceptance criteria
 
-- [ ] Must-have flags implemented and tested
-- [ ] Should-have flags implemented
+- [ ] `recall --version` outputs version
+- [ ] `recall import .memory/ --wing X --force` deletes and reimports
+- [ ] `recall add "fact" --type decision` auto-detects wing from cwd
+- [ ] Ingest skips files modified in last 5 minutes
 - [ ] All existing tests still pass
-- [ ] New flags have CLI error tests (missing required args)
