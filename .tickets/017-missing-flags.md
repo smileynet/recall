@@ -1,7 +1,7 @@
 ---
 id: 17
 title: "Add missing CLI flags required for local deployment"
-status: open
+status: done
 priority: high
 blocked_by: []
 estimate: 1h

@@ -1,7 +1,7 @@
 ---
 id: 12
 title: "Replace Windows scheduled task with direct Rust binary"
-status: open
+status: done
 priority: high
 blocked_by: [11, 17, 22]
 estimate: 30min

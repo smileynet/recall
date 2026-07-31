@@ -1,7 +1,7 @@
 ---
 id: 23
 title: "Add WAL checkpoint after large batch operations"
-status: open
+status: done
 priority: normal
 blocked_by: []
 estimate: 10min

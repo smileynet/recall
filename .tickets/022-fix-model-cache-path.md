@@ -1,7 +1,7 @@
 ---
 id: 22
 title: "Fix model cache path — use ~/.recall/models/ instead of CWD-relative"
-status: open
+status: done
 priority: high
 blocked_by: []
 estimate: 15min

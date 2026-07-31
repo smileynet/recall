@@ -1,7 +1,7 @@
 ---
 id: 13
 title: "Clean full ingest: delete old DB, ingest all sessions + import all .memory/"
-status: open
+status: done
 priority: high
 blocked_by: [11, 12]
 estimate: 30min (+ ~20min ingest time)

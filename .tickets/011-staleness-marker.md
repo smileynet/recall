@@ -1,7 +1,7 @@
 ---
 id: 11
 title: "Write last_ingest marker after ingest"
-status: open
+status: done
 priority: high
 blocked_by: []
 estimate: 10min
