@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use anyhow::Result;
 
-use recall::{store, search, ingest, embed, migrate, telemetry};
+use recall::{store, search, ingest, embed, migrate, telemetry, recall_log};
 
 #[derive(Parser)]
 #[command(name = "recall", version, about = "Cross-session semantic memory for AI coding assistants")]
@@ -235,7 +235,7 @@ fn cmd_import_all(force: bool) -> Result<i32> {
                         .map(|n| n.to_string_lossy().replace('-', "_").replace('.', ""))
                         .unwrap_or_default();
                     let mem_path = path.join(".memory");
-                    eprintln!("  {} → wing: {}", path.file_name().unwrap().to_string_lossy(), wing);
+                    recall_log!("  {} → wing: {}", path.file_name().unwrap().to_string_lossy(), wing);
                     ingest::import_directory(&mem_path.to_string_lossy(), &wing, force)?;
                     imported += 1;
                 }

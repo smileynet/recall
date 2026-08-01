@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use fs2::FileExt;
 use serde_json::Value;
 
-use crate::{embed, scan, store};
+use crate::{embed, recall_log, scan, store};
 
 // --- Constants (matching Python recall) ---
 
@@ -68,7 +68,7 @@ pub fn run_ingest(path: Option<&str>) -> Result<i32> {
     std::fs::create_dir_all(lock_path.parent().unwrap())?;
     let lock_file = std::fs::File::create(&lock_path)?;
     if lock_file.try_lock_exclusive().is_err() {
-        eprintln!("recall: another ingestion is running, skipping");
+        recall_log!("recall: another ingestion is running, skipping");
         return Ok(0);
     }
 
@@ -80,8 +80,8 @@ pub fn run_ingest(path: Option<&str>) -> Result<i32> {
         return Ok(0);
     }
 
-    eprintln!("  Ingesting: {}", dir.display());
-    eprintln!("  Files: {} changed of total", changed.len());
+    recall_log!("  Ingesting: {}", dir.display());
+    recall_log!("  Files: {} changed of total", changed.len());
 
     // Phase 2: load embedder (amortize cold start over batch)
     let embedder = embed::Embedder::new()?;
@@ -138,7 +138,7 @@ pub fn run_ingest(path: Option<&str>) -> Result<i32> {
         }
     }
 
-    eprintln!("  Done: {} files, {} chunks ingested{}", changed.len(), total_chunks,
+    recall_log!("  Done: {} files, {} chunks ingested{}", changed.len(), total_chunks,
         if files_deferred > 0 { format!(" ({} deferred — active)", files_deferred) } else { String::new() });
 
     // Write staleness marker
@@ -167,7 +167,7 @@ pub fn import_directory(path: &str, wing: &str, force: bool) -> Result<i32> {
             store::delete_import_source(&conn, &src, wing)?;
         }
         if deleted > 0 {
-            eprintln!("  Force: deleted {} existing import chunks for wing '{}'", deleted, wing);
+            recall_log!("  Force: deleted {} existing import chunks for wing '{}'", deleted, wing);
         }
     }
 
@@ -203,9 +203,9 @@ pub fn import_directory(path: &str, wing: &str, force: bool) -> Result<i32> {
     let mut files_updated = 0;
     let mut files_skipped = 0;
 
-    eprintln!("  Importing: {}", dir.display());
-    eprintln!("  Wing: {}", wing);
-    eprintln!("  Files: {} markdown", md_files.len());
+    recall_log!("  Importing: {}", dir.display());
+    recall_log!("  Wing: {}", wing);
+    recall_log!("  Files: {} markdown", md_files.len());
 
     for entry in &md_files {
         let rel_path = match entry.strip_prefix(dir) {
