@@ -22,7 +22,7 @@ No server, no API keys, no network at runtime. Runs locally with a cached ONNX e
 # Install (requires Rust toolchain)
 cargo install --path .
 
-# First run downloads the embedding model (~83MB, cached for future use)
+# First run downloads the embedding model (~416MB, cached for future use)
 recall ingest ~/.kiro/sessions/cli
 #   Ingesting: ~/.kiro/sessions/cli
 #   Files: 47 changed of total
@@ -65,7 +65,7 @@ cargo install --path .
 cp target/release/recall ~/.cargo/bin/
 ```
 
-**First run:** The BGE-base-en-v1.5 embedding model (~83MB) downloads automatically on first use and caches at `~/.recall/models/`. No network needed after that.
+**First run:** The BGE-base-en-v1.5 embedding model (~416MB) downloads automatically on first use and caches at `~/.recall/models/`. No network needed after that.
 
 **Verify:**
 ```bash

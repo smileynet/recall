@@ -11,7 +11,7 @@ Replace Python recall with a Rust single-binary equivalent. Deploy locally, vali
 
 ## Constraints
 - CLI interface matches Python recall (same commands, flags, output format)
-- Single binary, no runtime deps beyond cached ONNX model (~83MB, auto-downloads on first use)
+- Single binary, no runtime deps beyond cached ONNX model (~416MB FP32 ONNX, auto-downloads on first use)
 - Model: BGE-base-en-v1.5 (768-dim) — matches Python corpus, configurable via RECALL_MODEL
 
 ## Prior Decisions
@@ -33,9 +33,8 @@ Open tickets (deferred polish): #010 telemetry, #018 profile hook spike, #019 in
 4. **#010 telemetry** — local JSONL opt-in usage tracking (2h, no deps)
 
 ## Fog
-- Whether cargo-dist handles the ONNX static-link correctly across platforms (research says yes, untested)
-- Whether the 416MB model cache is the quantized or full-precision variant (research expected ~83MB)
-- import-all doesn't run as part of the scheduled task — only ingest does. Projects need manual initial import.
+- Whether cargo-dist handles the ONNX static-link correctly across platforms (research: no static link, need load-dynamic or bundle — see #026)
+- import-all doesn't run as part of the scheduled task — only ingest does. Projects need manual initial import (see #025 for fix).
 
 ## Evidence
 - E2E validation: `recall health` → 38/38 coverage, 26K chunks
