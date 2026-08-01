@@ -1,0 +1,57 @@
+{
+  "schema_version": 2,
+  "reviewer": "codex",
+  "reviewed_at": "2026-08-01T08:48:30.1180912-07:00",
+  "verdict": "changes_requested",
+  "commits": {
+    "scope": "all ancestors through reviewed_through, inclusive",
+    "reviewed_through": "b891bfb6b69ebe4d5e461e9a142bfb99f9530e39"
+  },
+  "ticket_source": {
+    "type": "tkt",
+    "root": ".tickets",
+    "observed_version": "0.1.0"
+  },
+  "tickets": [
+    { "path": ".tickets/001-compare-embedding-models.md", "blob": "7f7dd84f07a1b6822a06769b9558c536b7e635c0" },
+    { "path": ".tickets/002-spike-insta-cmd.md", "blob": "59bf31c26ae7f466abd499e369d1e8a99ec01a00" },
+    { "path": ".tickets/003-unit-tests.md", "blob": "4a86506802705febff5eb432f72182bb3bdd0912" },
+    { "path": ".tickets/004-cli-error-tests.md", "blob": "ceb1e3d3ed1da32567e61ecbad24bded115e3afa" },
+    { "path": ".tickets/005-contract-tests.md", "blob": "e6a323ec534fd4cb973d3c714325dc32766862ef" },
+    { "path": ".tickets/006-golden-queries.md", "blob": "87a4f1919da1e8021020e187f6ca5488010a0272" },
+    { "path": ".tickets/007-snapshot-tests.md", "blob": "bb581e481eef0721004f13eeec72e6e91a870d44" },
+    { "path": ".tickets/008-test-infrastructure.md", "blob": "6bb10a545ed80c758dcf6bdb1f970b020b1dcdcf" },
+    { "path": ".tickets/009-integration-tests-expand.md", "blob": "b3f28d524171638314332d7ccfb51debd4494423" },
+    { "path": ".tickets/010-telemetry.md", "blob": "f5a15c000fe3b4b597f328e660029c6737d14f0e" },
+    { "path": ".tickets/011-staleness-marker.md", "blob": "7a0b235089fa41123a4308a352499a6df20ac1ac" },
+    { "path": ".tickets/012-scheduled-task.md", "blob": "77eb6864ee908bb4f9dfdf11de99d525c6a6c266" },
+    { "path": ".tickets/013-clean-ingest.md", "blob": "36fb1c9be3b33d462bd4d80b3c126e445b43b851" },
+    { "path": ".tickets/014-update-crew-research.md", "blob": "8afc2948ef1d201bf888ad50f050fc6f38eb4055" },
+    { "path": ".tickets/015-spike-doctor-compat.md", "blob": "23be02b55397404d1462ee00bd7176c6326ebd2e" },
+    { "path": ".tickets/016-spike-cli-parity.md", "blob": "0130a872affd17a9035efacc002d0f0ac7532750" },
+    { "path": ".tickets/017-missing-flags.md", "blob": "24b7470ffb7b7c635e722368803ad2939890a4f3" },
+    { "path": ".tickets/018-spike-profile-hook.md", "blob": "f51bfe07f0e211cd801299e0adcea2d7d8de3049" },
+    { "path": ".tickets/019-spike-ingest-perf.md", "blob": "fa312de739abad4c31961218c01b2014cf8041f7" },
+    { "path": ".tickets/020-non-tty-logging.md", "blob": "315420d0669d46f65500068c97a3126811cbeb4a" },
+    { "path": ".tickets/021-spike-path-install.md", "blob": "e95c8df95f8417fc24878af0ae329b114510e9dc" },
+    { "path": ".tickets/022-fix-model-cache-path.md", "blob": "93c3f6f1708e17b22fc37cf70af268f3b24dc492" },
+    { "path": ".tickets/023-wal-checkpoint.md", "blob": "e79a5a68b6ccb140b37436b06da757b606d316d5" },
+    { "path": ".tickets/024-fix-readme-model-size.md", "blob": "991c9e9e80fc13444e816492bf574ee4c4809131" },
+    { "path": ".tickets/025-add-sync-subcommand.md", "blob": "a0483effb570d3c93fbd4a337dce70dc2dc541fb" },
+    { "path": ".tickets/026-spike-cargo-dist.md", "blob": "990fcb40fdceaa5dde4208e922d5b3584b8e7b17" },
+    { "path": ".tickets/027-codex-review-findings-through-a0ebdea.md", "blob": "c56d84e12fdb245799c8918e335ba19193dae0ee" }
+  ],
+  "adoption": {
+    "status": "complete",
+    "target": "a0ebdea512aefd843749ac4633773bd0d332c3bf",
+    "started_at": "2026-08-01T08:43:30.8934851-07:00",
+    "completed_at": "2026-08-01T08:48:30.1180912-07:00",
+    "commit_batch_limit": 25,
+    "ticket_batch_limit": 15,
+    "reviewed_ticket_blobs": [],
+    "coverage": {
+      "commits_complete": true,
+      "tickets_complete": true
+    }
+  }
+}
