@@ -1,7 +1,7 @@
 ---
 id: 20
 title: "Auto-log to file when running non-interactively (scheduled task support)"
-status: open
+status: done
 priority: normal
 blocked_by: []
 estimate: 30min
@@ -38,7 +38,15 @@ fn is_interactive() -> bool {
 
 ## Acceptance criteria
 
-- [ ] Scheduled task output captured to log file automatically
-- [ ] Interactive use unchanged (no log file created)
-- [ ] Log rotation keeps 7 days
-- [ ] `recall health` reports last log location/status (nice-to-have)
+- [x] Scheduled task output captured to log file automatically
+- [x] Interactive use unchanged (no log file created)
+- [x] Log rotation keeps 7 days
+- [ ] `recall health` reports last log location/status (nice-to-have, deferred)
+
+## Resolution (2026-08-01)
+
+Implemented in commit 7989bdd. New module `src/logging.rs` with:
+- `recall_log!` macro used throughout ingest/import code paths
+- Non-TTY detection via `std::io::IsTerminal`
+- Daily log rotation (7 days retained)
+- 5 unit tests, 93 total passing
