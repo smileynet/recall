@@ -1,7 +1,7 @@
 ---
 id: 24
 title: "Fix README model cache size claim (~83MB → ~416MB)"
-status: open
+status: done
 priority: normal
 blocked_by: []
 estimate: 5min
@@ -29,5 +29,9 @@ AGENTS.md already has the correct figure. The README is the only place with the 
 
 ## Acceptance criteria
 
-- [ ] Both README references updated to ~416MB
-- [ ] No other docs reference the wrong size
+- [x] Both README references updated to ~416MB
+- [x] No other docs reference the wrong size
+
+## Resolution (2026-08-01)
+
+Fixed in commit 3f5576b. Both README occurrences updated. AGENTS.md already had the correct figure. Handoff updated (gitignored).
