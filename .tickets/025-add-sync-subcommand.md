@@ -1,7 +1,7 @@
 ---
 id: 25
 title: "Add `recall sync` subcommand (ingest + import-all)"
-status: open
+status: done
 priority: normal
 blocked_by: []
 estimate: 2h
@@ -80,9 +80,15 @@ Set-ScheduledTask -TaskName "RecallIngest" -Action $action
 
 ## Acceptance criteria
 
-- [ ] `recall sync` runs ingest then import-all in one process
-- [ ] Embedder loaded once, shared across both operations
-- [ ] `--skip-import` and `--skip-ingest` flags work
-- [ ] `--force` passed through to import-all
-- [ ] Output summarizes both operations
-- [ ] Existing `recall ingest` and `recall import-all` commands unchanged
+- [x] `recall sync` runs ingest then import-all in one process
+- [x] Embedder loaded once, shared across both operations
+- [x] `--skip-import` and `--skip-ingest` flags work
+- [x] `--force` passed through to import-all
+- [x] Output summarizes both operations
+- [x] Existing `recall ingest` and `recall import-all` commands unchanged
+
+## Resolution (2026-08-01)
+
+Implemented in commit 5a85a0e. Refactored ingest.rs with `_with_embedder` variants,
+added Sync subcommand in cli.rs. Single model load ~1.7s for full sync (no changes).
+93 tests passing. Scheduled task update deferred until soak-tested.
