@@ -55,6 +55,12 @@ fn default_sessions_dir() -> PathBuf {
 
 /// Run ingestion: scan for changes, chunk new/modified files, embed, store.
 pub fn run_ingest(path: Option<&str>) -> Result<i32> {
+    let embedder = embed::Embedder::new()?;
+    run_ingest_with_embedder(path, &embedder)
+}
+
+/// Run ingestion with a pre-loaded embedder (for shared-embedder use in sync).
+pub fn run_ingest_with_embedder(path: Option<&str>, embedder: &embed::Embedder) -> Result<i32> {
     let dir = path.map(PathBuf::from).unwrap_or_else(default_sessions_dir);
     if !dir.is_dir() {
         anyhow::bail!("session directory not found: {}", dir.display());
@@ -82,9 +88,6 @@ pub fn run_ingest(path: Option<&str>) -> Result<i32> {
 
     recall_log!("  Ingesting: {}", dir.display());
     recall_log!("  Files: {} changed of total", changed.len());
-
-    // Phase 2: load embedder (amortize cold start over batch)
-    let embedder = embed::Embedder::new()?;
 
     // Phase 3: process changed files
     let mut total_chunks = 0;
@@ -152,6 +155,12 @@ pub fn run_ingest(path: Option<&str>) -> Result<i32> {
 /// Import markdown files from a directory into a wing.
 /// Uses SHA-256 content hashing to skip unchanged files on re-import.
 pub fn import_directory(path: &str, wing: &str, force: bool) -> Result<i32> {
+    let embedder = embed::Embedder::new()?;
+    import_directory_with_embedder(path, wing, force, &embedder)
+}
+
+/// Import markdown files with a pre-loaded embedder (for shared-embedder use in sync).
+pub fn import_directory_with_embedder(path: &str, wing: &str, force: bool, embedder: &embed::Embedder) -> Result<i32> {
     let dir = Path::new(path);
     if !dir.is_dir() {
         anyhow::bail!("not a directory: {}", path);
@@ -170,8 +179,6 @@ pub fn import_directory(path: &str, wing: &str, force: bool) -> Result<i32> {
             recall_log!("  Force: deleted {} existing import chunks for wing '{}'", deleted, wing);
         }
     }
-
-    let embedder = embed::Embedder::new()?;
 
     let md_files = walkdir_md(dir);
     if md_files.is_empty() {

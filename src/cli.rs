@@ -85,6 +85,18 @@ enum Commands {
         #[command(subcommand)]
         action: TelemetryAction,
     },
+    /// Run all periodic maintenance (ingest + import-all) in one process
+    Sync {
+        /// Force reimport all wings (bypass hash-gate)
+        #[arg(long)]
+        force: bool,
+        /// Skip import step (only ingest sessions)
+        #[arg(long)]
+        skip_import: bool,
+        /// Skip ingest step (only import .memory/ directories)
+        #[arg(long)]
+        skip_ingest: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -127,6 +139,7 @@ pub fn run() -> i32 {
             TelemetryAction::Stats => telemetry::cmd_telemetry_stats(),
             TelemetryAction::Clear => telemetry::cmd_telemetry_clear(),
         },
+        Commands::Sync { force, skip_import, skip_ingest } => cmd_sync(force, skip_import, skip_ingest),
     };
 
     match result {
@@ -155,6 +168,7 @@ fn command_name(cmd: &Commands) -> String {
         Commands::Forget { .. } => "forget",
         Commands::Migrate { .. } => "migrate",
         Commands::Telemetry { .. } => "telemetry",
+        Commands::Sync { .. } => "sync",
     }.to_string()
 }
 
@@ -248,6 +262,62 @@ fn cmd_import_all(force: bool) -> Result<i32> {
     } else {
         println!("\nImported {} projects", imported);
     }
+    Ok(0)
+}
+
+fn cmd_sync(force: bool, skip_import: bool, skip_ingest: bool) -> Result<i32> {
+    recall_log!("sync: starting");
+
+    // Load embedder once for both operations
+    let embedder = embed::Embedder::new()?;
+
+    // Phase 1: Ingest sessions
+    if !skip_ingest {
+        recall_log!("sync: ingesting sessions");
+        ingest::run_ingest_with_embedder(None, &embedder)?;
+    }
+
+    // Phase 2: Import all .memory/ directories
+    if !skip_import {
+        recall_log!("sync: importing .memory/ directories");
+
+        let mut roots = Vec::new();
+        if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+            let home_code = std::path::PathBuf::from(&home).join("code");
+            if home_code.is_dir() {
+                roots.push(home_code);
+            }
+        }
+        let d_code = std::path::PathBuf::from("D:/code");
+        if d_code.is_dir() {
+            roots.push(d_code);
+        }
+
+        let mut imported = 0;
+        for root in &roots {
+            if let Ok(entries) = std::fs::read_dir(root) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() && path.join(".memory").is_dir() {
+                        let wing = path.file_name()
+                            .map(|n| n.to_string_lossy().replace('-', "_").replace('.', ""))
+                            .unwrap_or_default();
+                        let mem_path = path.join(".memory");
+                        recall_log!("  {} → wing: {}", path.file_name().unwrap().to_string_lossy(), wing);
+                        ingest::import_directory_with_embedder(
+                            &mem_path.to_string_lossy(), &wing, force, &embedder
+                        )?;
+                        imported += 1;
+                    }
+                }
+            }
+        }
+
+        recall_log!("sync: imported {} projects", imported);
+    }
+
+    recall_log!("sync: complete");
+    println!("Sync complete.");
     Ok(0)
 }
 
