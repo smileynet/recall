@@ -1,7 +1,7 @@
 ---
 id: 10
 title: "Add local telemetry + crash reporting (opt-in)"
-status: open
+status: done
 priority: normal
 blocked_by: []
 estimate: 2h
@@ -47,9 +47,17 @@ crash_reporting = true  # local crash files (no network)
 
 ## Acceptance criteria
 
-- [ ] `recall telemetry status` shows current state
-- [ ] When enabled: every command appends a JSONL event
-- [ ] When disabled: no file writes beyond the config
-- [ ] `DO_NOT_TRACK=1` overrides config (always off)
-- [ ] Crash reports saved locally with no PII (paths redacted)
-- [ ] No network calls (phase 1 is local-only)
+- [x] `recall telemetry status` shows current state
+- [x] When enabled: every command appends a JSONL event
+- [x] When disabled: no file writes beyond the config
+- [x] `DO_NOT_TRACK=1` overrides config (always off)
+- [x] Crash reports saved locally with no PII (paths redacted)
+- [x] No network calls (phase 1 is local-only)
+
+## Resolution (2026-08-01)
+
+Implemented in commit 7758a0c. New module `src/telemetry.rs` (439 lines) with:
+- Config at `~/.recall/config.toml`, JSONL events at `~/.recall/telemetry.jsonl`
+- Crash reports at `~/.recall/crashes/` with path redaction
+- 7 unit tests added (88 total suite)
+- Event recording wraps all CLI commands with timing, exit code, error classification
