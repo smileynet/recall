@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use anyhow::Result;
 
-use recall::{store, search, ingest, embed, migrate};
+use recall::{store, search, ingest, embed, migrate, telemetry};
 
 #[derive(Parser)]
 #[command(name = "recall", version, about = "Cross-session semantic memory for AI coding assistants")]
@@ -80,10 +80,32 @@ enum Commands {
         #[arg(long)]
         embed: bool,
     },
+    /// Manage local telemetry and crash reporting
+    Telemetry {
+        #[command(subcommand)]
+        action: TelemetryAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum TelemetryAction {
+    /// Show current telemetry status
+    Status,
+    /// Enable usage telemetry
+    Enable,
+    /// Disable usage telemetry
+    Disable,
+    /// Show telemetry statistics
+    Stats,
+    /// Delete all telemetry data
+    Clear,
 }
 
 pub fn run() -> i32 {
+    let start = std::time::Instant::now();
     let cli = Cli::parse();
+    let command_name = command_name(&cli.command);
+
     let result = match cli.command {
         Commands::Search { query, wing, results } => cmd_search(&query, wing.as_deref(), results),
         Commands::Add { content, wing, room, r#type } => {
@@ -98,14 +120,42 @@ pub fn run() -> i32 {
         Commands::Health { json } => cmd_health(json),
         Commands::Forget { wing, older_than } => cmd_forget(&wing, older_than.as_deref()),
         Commands::Migrate { from, embed } => cmd_migrate(&from, embed),
+        Commands::Telemetry { action } => match action {
+            TelemetryAction::Status => telemetry::cmd_telemetry_status(),
+            TelemetryAction::Enable => telemetry::cmd_telemetry_enable(),
+            TelemetryAction::Disable => telemetry::cmd_telemetry_disable(),
+            TelemetryAction::Stats => telemetry::cmd_telemetry_stats(),
+            TelemetryAction::Clear => telemetry::cmd_telemetry_clear(),
+        },
     };
+
     match result {
-        Ok(code) => code,
+        Ok(code) => {
+            telemetry::record_event(&command_name, start, code, None);
+            code
+        }
         Err(e) => {
             eprintln!("recall: {:#}", e);
+            telemetry::record_event(&command_name, start, 1, Some(&e));
             1
         }
     }
+}
+
+fn command_name(cmd: &Commands) -> String {
+    match cmd {
+        Commands::Search { .. } => "search",
+        Commands::Add { .. } => "add",
+        Commands::Ingest { .. } => "ingest",
+        Commands::Import { .. } => "import",
+        Commands::ImportAll { .. } => "import-all",
+        Commands::Prime { .. } => "prime",
+        Commands::Status => "status",
+        Commands::Health { .. } => "health",
+        Commands::Forget { .. } => "forget",
+        Commands::Migrate { .. } => "migrate",
+        Commands::Telemetry { .. } => "telemetry",
+    }.to_string()
 }
 
 /// Derive wing name from current working directory.
