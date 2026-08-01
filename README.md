@@ -48,11 +48,11 @@ Built in Rust for instant startup and fast search:
 
 | Operation | Time |
 |-----------|:----:|
-| No-change scan (2,600 files) | 42ms |
-| Embed + store 45 chunks | 465ms |
-| Single embedding | 3.3ms |
-| Search query | <200ms |
-| Binary size | ~15 MB |
+| No-change scan (2,800 files) | 42ms |
+| Embed + store 64 chunks | 474ms |
+| Single embedding | 19ms |
+| Search query (25K chunks) | ~1.5s |
+| Binary size | ~25 MB |
 
 ## How It Works
 
@@ -61,7 +61,7 @@ Built in Rust for instant startup and fast search:
 │  Ingestion (background, scheduled)                    │
 │  1. Stat-scan session files (42ms for 2,600)         │
 │  2. Hash changed files only                          │
-│  3. Chunk → Embed → Store (210 chunks/sec)           │
+│  3. Chunk → Embed → Store (135 chunks/sec)           │
 └──────────────────────────────────────────────────────┘
                         ↓
 ┌──────────────────────────────────────────────────────┐
@@ -73,7 +73,7 @@ Built in Rust for instant startup and fast search:
                         ↓
 ┌──────────────────────────────────────────────────────┐
 │  Search (interactive, instant)                        │
-│  1. Embed query (3.3ms)                              │
+│  1. Embed query (19ms)                               │
 │  2. BM25 search (FTS5) + vector similarity           │
 │  3. RRF fusion → ranked results                      │
 └──────────────────────────────────────────────────────┘
@@ -85,7 +85,7 @@ Built in Rust for instant startup and fast search:
 
 **[Google OKF](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf)** — The "nouns, not verbs" insight that shapes how project knowledge (`.memory/`) stays separate from behavior (skills). recall's import understands OKF-compatible frontmatter.
 
-**[fastembed](https://github.com/Anush008/fastembed-rs)** — Local ONNX embedding inference that makes server-free semantic search practical. The Rust port by the Qdrant team powers recall's 3ms-per-embedding performance.
+**[fastembed](https://github.com/Anush008/fastembed-rs)** — Local ONNX embedding inference that makes server-free semantic search practical. The Rust port by the Qdrant team powers recall's 19ms-per-embedding performance.
 
 ## License
 
