@@ -6,7 +6,7 @@ info:
     - health
     - "--json"
   env:
-    RECALL_DB: "C:\\Users\\uosmi\\AppData\\Local\\Temp\\.tmpCuiPt7\\test.sqlite3"
+    RECALL_DB: "C:\\Users\\uosmi\\AppData\\Local\\Temp\\.tmpJ39acm\\test.sqlite3"
 ---
 success: true
 exit_code: 0
@@ -20,35 +20,36 @@ exit_code: 0
   "wings": {},
   "import_wings": [],
   "duplicates": [],
-  "last_ingest_ts": 1785460728,
-  "discoverable_projects": 36,
+  "last_ingest_ts": 1785546056,
+  "discoverable_projects": 39,
   "covered_projects": 0,
   "missing_projects": [
-    "audio_helper",
-    "game_slicer",
-    "lacrosse_bosse_project",
-    "rustacean_academy",
-    "stormworks_station",
-    "system_health",
+    "crew_research",
     "abiotic_factor_re",
     "archwright",
     "asset_production",
+    "audio_helper",
     "bigg_pi",
     "blender_plugins",
+    "crew_research",
     "disco_elysium_re",
     "ebb_analyzer",
     "game_design_salon",
     "game_slicer",
     "game_workshop",
+    "godot_helper",
     "hunter_manager",
     "kc2_mods",
     "kc2_mods_manager",
     "kc2_ui_workshop",
+    "lacrosse_bosse",
+    "lacrosse_bosse_platform",
     "model_training",
     "neon_nights_analyzer",
     "pinoy_prints",
     "pixelrig",
     "recall",
+    "rustacean_academy",
     "sci_phoenix",
     "seamless_clone",
     "shader_library",
@@ -56,6 +57,8 @@ exit_code: 0
     "shadowrun_snes",
     "skald2_re",
     "softswerve",
+    "stormworks_station",
+    "system_health",
     "tarkies_tester",
     "tkt",
     "vam_slicer",

@@ -45,6 +45,12 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Import all .memory/ directories from project roots
+    ImportAll {
+        /// Force reimport all (delete + re-embed)
+        #[arg(long)]
+        force: bool,
+    },
     /// Session start payload (recent facts + top results)
     Prime {
         /// Wing to scope results (default: auto-detect from cwd)
@@ -86,6 +92,7 @@ pub fn run() -> i32 {
         }
         Commands::Ingest { path } => cmd_ingest(path.as_deref()),
         Commands::Import { path, wing, force } => cmd_import(&path, &wing, force),
+        Commands::ImportAll { force } => cmd_import_all(force),
         Commands::Prime { wing } => cmd_prime(wing.as_deref()),
         Commands::Status => cmd_status(),
         Commands::Health { json } => cmd_health(json),
@@ -153,6 +160,45 @@ fn cmd_ingest(path: Option<&str>) -> Result<i32> {
 
 fn cmd_import(path: &str, wing: &str, force: bool) -> Result<i32> {
     ingest::import_directory(path, wing, force)
+}
+
+fn cmd_import_all(force: bool) -> Result<i32> {
+    let mut roots = Vec::new();
+    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+        let home_code = std::path::PathBuf::from(&home).join("code");
+        if home_code.is_dir() {
+            roots.push(home_code);
+        }
+    }
+    let d_code = std::path::PathBuf::from("D:/code");
+    if d_code.is_dir() {
+        roots.push(d_code);
+    }
+
+    let mut imported = 0;
+    for root in &roots {
+        if let Ok(entries) = std::fs::read_dir(root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() && path.join(".memory").is_dir() {
+                    let wing = path.file_name()
+                        .map(|n| n.to_string_lossy().replace('-', "_").replace('.', ""))
+                        .unwrap_or_default();
+                    let mem_path = path.join(".memory");
+                    eprintln!("  {} → wing: {}", path.file_name().unwrap().to_string_lossy(), wing);
+                    ingest::import_directory(&mem_path.to_string_lossy(), &wing, force)?;
+                    imported += 1;
+                }
+            }
+        }
+    }
+
+    if imported == 0 {
+        println!("No projects with .memory/ found in {:?}", roots);
+    } else {
+        println!("\nImported {} projects", imported);
+    }
+    Ok(0)
 }
 
 fn cmd_prime(wing_arg: Option<&str>) -> Result<i32> {
