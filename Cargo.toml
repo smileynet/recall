@@ -11,7 +11,11 @@ categories = ["command-line-utilities", "text-processing"]
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 rusqlite = { version = "0.32", features = ["bundled", "vtab"] }
-fastembed = "4"
+fastembed = { version = "4", default-features = false, features = ["ort-load-dynamic", "hf-hub-native-tls"] }
+ort = { version = "=2.0.0-rc.9", features = ["load-dynamic", "ndarray"], default-features = false }
+ureq = "2"
+flate2 = "1"
+tar = "0.4"
 jwalk = "0.8"
 sha2 = "0.10"
 fs2 = "0.4"

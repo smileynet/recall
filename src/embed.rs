@@ -1,6 +1,232 @@
 use anyhow::Result;
 use fastembed::{TextEmbedding, InitOptions, EmbeddingModel};
 
+use std::io::Write;
+use std::path::PathBuf;
+use std::sync::Once;
+
+// ─── ONNX Runtime management (load-dynamic) ─────────────────────────────────
+
+/// The ONNX Runtime version required by ort 2.0.0-rc.9.
+const ORT_VERSION: &str = "1.20.0";
+
+/// Platform-specific download URL for ONNX Runtime from Microsoft's GitHub releases.
+fn ort_download_url() -> &'static str {
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    { "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-win-x64-1.20.0.zip" }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    { "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-linux-x64-1.20.0.tgz" }
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    { "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-osx-x86_64-1.20.0.tgz" }
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    { "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-osx-arm64-1.20.0.tgz" }
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    { "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-linux-aarch64-1.20.0.tgz" }
+}
+
+/// Platform-specific library filename.
+fn ort_lib_filename() -> &'static str {
+    #[cfg(target_os = "windows")]
+    { "onnxruntime.dll" }
+    #[cfg(target_os = "linux")]
+    { "libonnxruntime.so" }
+    #[cfg(target_os = "macos")]
+    { "libonnxruntime.dylib" }
+}
+
+/// Directory where we cache the ONNX Runtime library.
+fn ort_lib_dir() -> PathBuf {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".recall").join("lib")
+}
+
+/// Full path to the cached ONNX Runtime library.
+fn ort_lib_path() -> PathBuf {
+    ort_lib_dir().join(ort_lib_filename())
+}
+
+/// Ensure ONNX Runtime is available and initialize ort to use it.
+/// Downloads on first run if not cached. Must be called before any ort API usage.
+static ORT_INIT: Once = Once::new();
+static mut ORT_INIT_ERROR: Option<String> = None;
+
+pub fn ensure_ort_runtime() -> Result<()> {
+    ORT_INIT.call_once(|| {
+        if let Err(e) = ensure_ort_runtime_inner() {
+            unsafe { ORT_INIT_ERROR = Some(format!("{:#}", e)); }
+        }
+    });
+    unsafe {
+        if let Some(ref err) = ORT_INIT_ERROR {
+            anyhow::bail!("ONNX Runtime initialization failed: {}", err);
+        }
+    }
+    Ok(())
+}
+
+fn ensure_ort_runtime_inner() -> Result<()> {
+    let lib_path = ort_lib_path();
+
+    // Download if not cached
+    if !lib_path.exists() {
+        download_ort_runtime(&lib_path)?;
+    }
+
+    // Tell ort where to find the library (overrides System32 or PATH search)
+    ort::init_from(lib_path.to_string_lossy().as_ref()).commit()?;
+    Ok(())
+}
+
+fn download_ort_runtime(target_path: &PathBuf) -> Result<()> {
+    let url = ort_download_url();
+    eprintln!("recall: Downloading ONNX Runtime v{} (first run only)...", ORT_VERSION);
+
+    let response = ureq::get(url).call()
+        .map_err(|e| anyhow::anyhow!("Failed to download ONNX Runtime: {}", e))?;
+
+    let len = response.header("Content-Length")
+        .and_then(|v| v.parse::<u64>().ok());
+
+    let mut body = Vec::new();
+    let mut reader = response.into_reader();
+    if let Some(total) = len {
+        let mut downloaded: u64 = 0;
+        let mut buf = [0u8; 65536];
+        loop {
+            let n = std::io::Read::read(&mut reader, &mut buf)?;
+            if n == 0 { break; }
+            body.extend_from_slice(&buf[..n]);
+            downloaded += n as u64;
+            eprint!("\r  {:.1}MB / {:.1}MB", downloaded as f64 / 1_048_576.0, total as f64 / 1_048_576.0);
+        }
+        eprintln!();
+    } else {
+        std::io::Read::read_to_end(&mut reader, &mut body)?;
+    }
+
+    // Extract the library from the archive
+    std::fs::create_dir_all(target_path.parent().unwrap())?;
+    let lib_name = ort_lib_filename();
+
+    if url.ends_with(".zip") {
+        extract_lib_from_zip(&body, lib_name, target_path)?;
+    } else {
+        extract_lib_from_tgz(&body, lib_name, target_path)?;
+    }
+
+    eprintln!("  Cached at: {}", target_path.display());
+    Ok(())
+}
+
+fn extract_lib_from_tgz(data: &[u8], lib_name: &str, target_path: &PathBuf) -> Result<()> {
+    let decoder = flate2::read::GzDecoder::new(data);
+    let mut archive = tar::Archive::new(decoder);
+
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let path = entry.path()?.to_path_buf();
+        let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+        // Match the library file (may be in a subdirectory like onnxruntime-linux-x64-1.20.0/lib/)
+        if filename == lib_name || filename.starts_with(lib_name) {
+            let mut file = std::fs::File::create(target_path)?;
+            std::io::copy(&mut entry, &mut file)?;
+            return Ok(());
+        }
+    }
+    anyhow::bail!("Could not find {} in the downloaded archive", lib_name);
+}
+
+#[cfg(target_os = "windows")]
+fn extract_lib_from_zip(data: &[u8], lib_name: &str, target_path: &PathBuf) -> Result<()> {
+    // Minimal zip extraction — find the DLL entry and extract it
+    // ZIP format: search for the file by scanning central directory
+    use std::io::{Cursor, Read, Seek, SeekFrom};
+
+    let mut cursor = Cursor::new(data);
+    let len = data.len();
+
+    // Find End of Central Directory record (last 22+ bytes)
+    let eocd_search_start = if len > 65557 { len - 65557 } else { 0 };
+    let mut eocd_pos = None;
+    for i in (eocd_search_start..len.saturating_sub(3)).rev() {
+        if data[i] == 0x50 && data[i+1] == 0x4b && data[i+2] == 0x05 && data[i+3] == 0x06 {
+            eocd_pos = Some(i);
+            break;
+        }
+    }
+    let eocd_pos = eocd_pos.ok_or_else(|| anyhow::anyhow!("Invalid ZIP: no EOCD found"))?;
+
+    // Parse EOCD to find central directory offset
+    let cd_offset = u32::from_le_bytes([data[eocd_pos+16], data[eocd_pos+17], data[eocd_pos+18], data[eocd_pos+19]]) as u64;
+    let cd_entries = u16::from_le_bytes([data[eocd_pos+10], data[eocd_pos+11]]) as usize;
+
+    cursor.seek(SeekFrom::Start(cd_offset))?;
+
+    for _ in 0..cd_entries {
+        let mut sig = [0u8; 4];
+        cursor.read_exact(&mut sig)?;
+        if sig != [0x50, 0x4b, 0x01, 0x02] { break; }
+
+        let mut header = [0u8; 42];
+        cursor.read_exact(&mut header)?;
+
+        let compressed_size = u32::from_le_bytes([header[16], header[17], header[18], header[19]]) as u64;
+        let uncompressed_size = u32::from_le_bytes([header[20], header[21], header[22], header[23]]) as u64;
+        let name_len = u16::from_le_bytes([header[24], header[25]]) as usize;
+        let extra_len = u16::from_le_bytes([header[26], header[27]]) as usize;
+        let comment_len = u16::from_le_bytes([header[28], header[29]]) as usize;
+        let local_header_offset = u32::from_le_bytes([header[38], header[39], header[40], header[41]]) as u64;
+        let compression = u16::from_le_bytes([header[6], header[7]]);
+
+        let mut name_buf = vec![0u8; name_len];
+        cursor.read_exact(&mut name_buf)?;
+        let name = String::from_utf8_lossy(&name_buf);
+
+        // Skip extra and comment
+        cursor.seek(SeekFrom::Current((extra_len + comment_len) as i64))?;
+
+        if name.ends_with(lib_name) {
+            // Found it — read from local file header
+            let mut local_cursor = Cursor::new(data);
+            local_cursor.seek(SeekFrom::Start(local_header_offset))?;
+
+            let mut local_sig = [0u8; 4];
+            local_cursor.read_exact(&mut local_sig)?;
+            let mut local_header = [0u8; 26];
+            local_cursor.read_exact(&mut local_header)?;
+            let local_name_len = u16::from_le_bytes([local_header[22], local_header[23]]) as u64;
+            let local_extra_len = u16::from_le_bytes([local_header[24], local_header[25]]) as u64;
+            local_cursor.seek(SeekFrom::Current((local_name_len + local_extra_len) as i64))?;
+
+            let pos = local_cursor.position() as usize;
+            let file_data = if compression == 0 {
+                // Stored (no compression)
+                data[pos..pos + uncompressed_size as usize].to_vec()
+            } else if compression == 8 {
+                // Deflate
+                let mut decoder = flate2::read::DeflateDecoder::new(&data[pos..pos + compressed_size as usize]);
+                let mut out = Vec::with_capacity(uncompressed_size as usize);
+                decoder.read_to_end(&mut out)?;
+                out
+            } else {
+                anyhow::bail!("Unsupported ZIP compression method: {}", compression);
+            };
+
+            let mut file = std::fs::File::create(target_path)?;
+            file.write_all(&file_data)?;
+            return Ok(());
+        }
+    }
+    anyhow::bail!("Could not find {} in the ZIP archive", lib_name);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn extract_lib_from_zip(_data: &[u8], _lib_name: &str, _target_path: &PathBuf) -> Result<()> {
+    anyhow::bail!("ZIP extraction not expected on this platform (ONNX Runtime uses .tgz)")
+}
+
 /// Supported embedding models.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Model {
@@ -105,11 +331,13 @@ pub struct Embedder {
 impl Embedder {
     /// Load the configured model (from RECALL_MODEL env var or default).
     pub fn new() -> Result<Self> {
+        ensure_ort_runtime()?;
         Self::with_model(configured_model())
     }
 
     /// Load a specific model.
     pub fn with_model(which: Model) -> Result<Self> {
+        ensure_ort_runtime()?;
         let cache_dir = model_cache_dir();
         let model = TextEmbedding::try_new(
             InitOptions::new(which.fastembed_model())
