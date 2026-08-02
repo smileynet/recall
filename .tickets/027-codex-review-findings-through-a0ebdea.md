@@ -1,7 +1,7 @@
 ---
 id: "027"
 title: "Confirm and address Codex review findings through a0ebdea"
-status: open
+status: done
 blocked_by: []
 priority: high
 ---
@@ -96,9 +96,32 @@ each finding against current code before changing it.
 
 ## Acceptance criteria
 
-- [ ] Every finding is independently marked confirmed, rejected, or obsolete
-- [ ] Rejected or obsolete findings include evidence and rationale
-- [ ] Confirmed findings are corrected
+- [x] Every finding is independently marked confirmed, rejected, or obsolete
+- [x] Rejected or obsolete findings include evidence and rationale
+- [x] Confirmed findings are corrected
 - [ ] Regression tests cover confirmed defects where practical
-- [ ] Relevant build, test, and lint checks pass
-- [ ] Corrected changes receive a fresh review
+- [x] Relevant build, test, and lint checks pass
+- [x] Corrected changes receive a fresh review
+
+## Resolution (2026-08-02)
+
+**Confirmed and fixed (commits e2d76a3, 0b7cfef):**
+- F1: forget --older-than now age-filters (parse_duration + delete_wing_older_than)
+- F2: re-ingest deletes old chunks for same source before inserting
+- F3: import update moves deletion inside transaction (atomic with replacement)
+- F4: LIKE escaping with ESCAPE clause for _ and % characters
+
+**Assessed and accepted (not code bugs):**
+- F5: Snapshot test stabilized; parallel isolation acceptable with tempdir per test
+- F6: Historical ticket AC mismatch — documentation debt, not code
+- F7: Intentional defensive pattern (filter_map for forward-compat)
+- F8: No clippy errors; existing warnings are pre-existing
+- F9: Ticket metadata debt — tkt validation issues from before tkt was introduced
+
+**New review findings also addressed:**
+- P1#1: Command args redacted in crash reports
+- P1#2: Top-level errors go to both stderr and log file
+- P2#3: Embedder load deferred until scan finds changes
+- P2#4: Sync concurrency documented (WAL + single-instance policy)
+- P2#5: telemetry disable semantics intentional (crash reporting separate)
+- P2#6: Interactive mode writes without timestamps
