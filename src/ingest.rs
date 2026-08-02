@@ -55,12 +55,15 @@ fn default_sessions_dir() -> PathBuf {
 
 /// Run ingestion: scan for changes, chunk new/modified files, embed, store.
 pub fn run_ingest(path: Option<&str>) -> Result<i32> {
-    let embedder = embed::Embedder::new()?;
-    run_ingest_with_embedder(path, &embedder)
+    run_ingest_with_embedder_lazy(path, None)
 }
 
 /// Run ingestion with a pre-loaded embedder (for shared-embedder use in sync).
 pub fn run_ingest_with_embedder(path: Option<&str>, embedder: &embed::Embedder) -> Result<i32> {
+    run_ingest_with_embedder_lazy(path, Some(embedder))
+}
+
+fn run_ingest_with_embedder_lazy(path: Option<&str>, shared_embedder: Option<&embed::Embedder>) -> Result<i32> {
     let dir = path.map(PathBuf::from).unwrap_or_else(default_sessions_dir);
     if !dir.is_dir() {
         anyhow::bail!("session directory not found: {}", dir.display());
@@ -88,6 +91,16 @@ pub fn run_ingest_with_embedder(path: Option<&str>, embedder: &embed::Embedder) 
 
     recall_log!("  Ingesting: {}", dir.display());
     recall_log!("  Files: {} changed of total", changed.len());
+
+    // Load embedder lazily: use shared if provided, otherwise create new
+    let owned_embedder;
+    let embedder = match shared_embedder {
+        Some(e) => e,
+        None => {
+            owned_embedder = embed::Embedder::new()?;
+            &owned_embedder
+        }
+    };
 
     // Phase 3: process changed files
     let mut total_chunks = 0;

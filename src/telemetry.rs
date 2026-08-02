@@ -168,7 +168,7 @@ fn build_crash_report(info: &std::panic::PanicHookInfo) -> String {
         .map(|l| format!("{}:{}:{}", redact_paths(&l.file().to_string()), l.line(), l.column()))
         .unwrap_or_else(|| "unknown location".to_string());
 
-    let command = std::env::args().collect::<Vec<_>>().join(" ");
+    let command = redact_paths(&std::env::args().collect::<Vec<_>>().join(" "));
 
     format!(
         "recall crash report\n\

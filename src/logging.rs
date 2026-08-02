@@ -68,12 +68,11 @@ pub fn init() -> bool {
 }
 
 /// Write a timestamped line to the log file (if logging is active).
-/// Also prints to stderr for interactive use.
+/// In interactive mode, writes the message without timestamps to stderr.
 pub fn log(msg: &str) {
-    let timestamp = now_timestamp();
-    let line = format!("[{}] {}\n", timestamp, msg);
-
     if LOGGING_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+        let timestamp = now_timestamp();
+        let line = format!("[{}] {}\n", timestamp, msg);
         if let Ok(mut guard) = LOG_FILE.lock() {
             if let Some(ref mut file) = *guard {
                 let _ = file.write_all(line.as_bytes());
@@ -82,8 +81,8 @@ pub fn log(msg: &str) {
             }
         }
     }
-    // Fallback or interactive: write to stderr
-    let _ = io::stderr().write_all(line.as_bytes());
+    // Interactive fallback: write without timestamp (preserves original format)
+    let _ = io::stderr().write_all(format!("{}\n", msg).as_bytes());
 }
 
 /// Get the path to the current log file (for health reporting).
