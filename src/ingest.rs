@@ -131,8 +131,9 @@ fn run_ingest_with_embedder_lazy(path: Option<&str>, shared_embedder: Option<&em
         let texts: Vec<&str> = chunks.iter().map(|c| c.as_str()).collect();
         let embeddings = embedder.embed_batch(&texts)?;
 
-        // Store in transaction
+        // Store in transaction (delete old chunks first to avoid duplicates on re-ingest)
         conn.execute("BEGIN IMMEDIATE", [])?;
+        store::delete_chunks_by_source(&conn, &file_path.to_string_lossy())?;
         for (chunk, embedding) in chunks.iter().zip(embeddings.iter()) {
             let room = classify_room(chunk);
             store::insert_chunk(&conn, chunk, &wing, &room, "session",
@@ -252,9 +253,9 @@ pub fn import_directory_with_embedder(path: &str, wing: &str, force: bool, embed
             continue;
         }
 
-        // File is new or changed — delete old chunks if updating
-        if stored_hash.is_some() {
-            store::delete_chunks_by_source(&conn, &source_key)?;
+        // File is new or changed — track for update
+        let is_update = stored_hash.is_some();
+        if is_update {
             files_updated += 1;
         } else {
             files_imported += 1;
@@ -263,6 +264,10 @@ pub fn import_directory_with_embedder(path: &str, wing: &str, force: bool, embed
         // Chunk
         let chunks = chunk_markdown(&content);
         if chunks.is_empty() {
+            // Still delete old chunks if this was an update (file became empty)
+            if is_update {
+                store::delete_chunks_by_source(&conn, &source_key)?;
+            }
             store::upsert_import_source(&conn, &rel_path, wing, &content_hash, file_size, 0)?;
             continue;
         }
@@ -277,11 +282,14 @@ pub fn import_directory_with_embedder(path: &str, wing: &str, force: bool, embed
         // Detect type from frontmatter
         let dtype = detect_type_from_frontmatter(&content);
 
-        // Embed and store
+        // Embed and store — delete old chunks INSIDE transaction so failure is atomic
         let texts: Vec<&str> = chunks.iter().map(|c| c.as_str()).collect();
         let embeddings = embedder.embed_batch(&texts)?;
 
         conn.execute("BEGIN IMMEDIATE", [])?;
+        if is_update {
+            store::delete_chunks_by_source(&conn, &source_key)?;
+        }
         for (chunk, embedding) in chunks.iter().zip(embeddings.iter()) {
             store::insert_chunk(&conn, chunk, wing, &room, &dtype, &source_key, embedding)?;
         }

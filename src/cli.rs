@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use anyhow::Result;
 
-use recall::{store, search, ingest, embed, migrate, telemetry, recall_log};
+use recall::{store, search, ingest, embed, migrate, telemetry, logging, recall_log};
 
 #[derive(Parser)]
 #[command(name = "recall", version, about = "Cross-session semantic memory for AI coding assistants")]
@@ -148,7 +148,9 @@ pub fn run() -> i32 {
             code
         }
         Err(e) => {
-            eprintln!("recall: {:#}", e);
+            let msg = format!("recall: {:#}", e);
+            eprintln!("{}", msg);
+            logging::log(&msg);
             telemetry::record_event(&command_name, start, 1, Some(&e));
             1
         }
@@ -266,6 +268,9 @@ fn cmd_import_all(force: bool) -> Result<i32> {
 }
 
 fn cmd_sync(force: bool, skip_import: bool, skip_ingest: bool) -> Result<i32> {
+    // Note: ingest acquires its own exclusive lock (recall.lock) but import relies on
+    // SQLite WAL for write safety. Concurrent sync is prevented by Windows Task Scheduler
+    // single-instance policy. If manual overlap occurs, WAL ensures correctness.
     recall_log!("sync: starting");
 
     // Load embedder once for both operations
@@ -579,11 +584,39 @@ fn discover_project_coverage(import_wings: &[String]) -> (usize, usize, Vec<Stri
     (discoverable.len(), covered.len(), missing)
 }
 
-fn cmd_forget(wing: &str, _older_than: Option<&str>) -> Result<i32> {
+fn cmd_forget(wing: &str, older_than: Option<&str>) -> Result<i32> {
     let db = store::open_db()?;
-    let deleted = store::delete_wing(&db, wing)?;
+
+    let deleted = if let Some(age_str) = older_than {
+        let seconds = parse_duration(age_str)
+            .ok_or_else(|| anyhow::anyhow!("invalid duration '{}' (use e.g. 90d, 24h, 4w)", age_str))?;
+        let cutoff = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64 - seconds;
+        store::delete_wing_older_than(&db, wing, cutoff)?
+    } else {
+        store::delete_wing(&db, wing)?
+    };
+
     println!("Deleted {} chunks from wing {:?}", deleted, wing);
     Ok(0)
+}
+
+/// Parse a duration string like "90d", "24h", "4w" into seconds.
+fn parse_duration(s: &str) -> Option<i64> {
+    let s = s.trim();
+    if s.is_empty() { return None; }
+    let (num_str, suffix) = s.split_at(s.len() - 1);
+    let num: i64 = num_str.parse().ok()?;
+    match suffix {
+        "s" => Some(num),
+        "m" => Some(num * 60),
+        "h" => Some(num * 3600),
+        "d" => Some(num * 86400),
+        "w" => Some(num * 7 * 86400),
+        _ => None,
+    }
 }
 
 fn cmd_migrate(from: &str, batch_embed: bool) -> Result<i32> {

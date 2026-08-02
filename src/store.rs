@@ -226,6 +226,19 @@ pub fn delete_wing(conn: &Connection, wing: &str) -> Result<usize> {
     Ok(deleted)
 }
 
+/// Delete chunks from a wing that are older than the given epoch timestamp.
+pub fn delete_wing_older_than(conn: &Connection, wing: &str, cutoff_epoch: i64) -> Result<usize> {
+    conn.execute(
+        "DELETE FROM fts_chunks WHERE rowid IN (SELECT id FROM chunks WHERE wing = ?1 AND created_at < ?2)",
+        params![wing, cutoff_epoch],
+    )?;
+    let deleted = conn.execute(
+        "DELETE FROM chunks WHERE wing = ?1 AND created_at < ?2",
+        params![wing, cutoff_epoch],
+    )?;
+    Ok(deleted)
+}
+
 // --- Meta ---
 
 pub fn set_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
@@ -332,13 +345,15 @@ pub fn delete_chunks_by_source(conn: &Connection, source: &str) -> Result<usize>
 }
 
 /// Delete chunks by source key prefix (LIKE 'prefix%').
+/// Escapes LIKE wildcards in the prefix to prevent unintended matches.
 pub fn delete_chunks_by_source_prefix(conn: &Connection, prefix: &str) -> Result<usize> {
-    let pattern = format!("{}%", prefix);
+    let escaped = prefix.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+    let pattern = format!("{}%", escaped);
     conn.execute(
-        "DELETE FROM fts_chunks WHERE rowid IN (SELECT id FROM chunks WHERE source LIKE ?1)",
+        "DELETE FROM fts_chunks WHERE rowid IN (SELECT id FROM chunks WHERE source LIKE ?1 ESCAPE '\\')",
         params![pattern],
     )?;
-    let deleted = conn.execute("DELETE FROM chunks WHERE source LIKE ?1", params![pattern])?;
+    let deleted = conn.execute("DELETE FROM chunks WHERE source LIKE ?1 ESCAPE '\\'", params![pattern])?;
     Ok(deleted)
 }
 
