@@ -33,8 +33,14 @@ pub fn is_active() -> bool {
 
 /// Initialize file logging if running non-interactively.
 /// Returns true if logging was activated (non-TTY mode).
+/// Skips activation when RECALL_DB is set (test environment).
 pub fn init() -> bool {
     if is_interactive() {
+        return false;
+    }
+
+    // Don't log to file during tests (they set RECALL_DB to a temp path)
+    if std::env::var("RECALL_DB").is_ok() {
         return false;
     }
 

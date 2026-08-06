@@ -448,6 +448,11 @@ fn cmd_health(json: bool) -> Result<i32> {
         } else {
             println!("  Last ingest:   never");
         }
+        if let Some(log_path) = recall::logging::current_log_path() {
+            if let Ok(meta) = std::fs::metadata(&log_path) {
+                println!("  Last log:      {} ({:.1} KB)", log_path.display(), meta.len() as f64 / 1024.0);
+            }
+        }
         println!();
     }
     Ok(0)
