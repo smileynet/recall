@@ -1,7 +1,7 @@
 ---
 id: 32
 title: "Fix log file session-start spam from test invocations"
-status: open
+status: done
 priority: low
 blocked_by: []
 estimate: 15min
