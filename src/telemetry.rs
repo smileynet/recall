@@ -24,7 +24,7 @@ pub struct TelemetryConfig {
 impl Default for TelemetryConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             crash_reporting: true,
         }
     }
@@ -385,7 +385,7 @@ mod tests {
     #[test]
     fn test_parse_config_defaults() {
         let config = parse_config("");
-        assert!(!config.enabled);
+        assert!(config.enabled);
         assert!(config.crash_reporting);
     }
 

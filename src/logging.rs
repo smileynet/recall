@@ -31,14 +31,10 @@ pub fn is_active() -> bool {
     LOGGING_ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// Initialize file logging if running non-interactively.
-/// Returns true if logging was activated (non-TTY mode).
+/// Initialize file logging. Always writes to log file for persistent record.
+/// Returns true if logging was activated.
 /// Skips activation when RECALL_DB is set (test environment).
 pub fn init() -> bool {
-    if is_interactive() {
-        return false;
-    }
-
     // Don't log to file during tests (they set RECALL_DB to a temp path)
     if std::env::var("RECALL_DB").is_ok() {
         return false;
@@ -74,21 +70,25 @@ pub fn init() -> bool {
 }
 
 /// Write a timestamped line to the log file (if logging is active).
-/// In interactive mode, writes the message without timestamps to stderr.
+/// In interactive mode, also writes to stderr without timestamps.
 pub fn log(msg: &str) {
+    let timestamp = now_timestamp();
+    let line = format!("[{}] {}\n", timestamp, msg);
+
+    // Always write to log file if active
     if LOGGING_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
-        let timestamp = now_timestamp();
-        let line = format!("[{}] {}\n", timestamp, msg);
         if let Ok(mut guard) = LOG_FILE.lock() {
             if let Some(ref mut file) = *guard {
                 let _ = file.write_all(line.as_bytes());
                 let _ = file.flush();
-                return;
             }
         }
     }
-    // Interactive fallback: write without timestamp (preserves original format)
-    let _ = io::stderr().write_all(format!("{}\n", msg).as_bytes());
+
+    // In interactive mode, also print to stderr (without timestamp)
+    if is_interactive() {
+        let _ = io::stderr().write_all(format!("{}\n", msg).as_bytes());
+    }
 }
 
 /// Get the path to the current log file (for health reporting).
