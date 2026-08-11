@@ -1,7 +1,7 @@
 ---
 id: 19
 title: "Spike: ingest performance — why 20 min for 1600 files?"
-status: open
+status: done
 priority: normal
 type: spike
 blocked_by: []
@@ -33,9 +33,9 @@ Why is ingest 18× slower than raw embedding throughput?
 
 ## Success criteria
 
-- [ ] Bottleneck identified with data
-- [ ] Proposed optimization with expected improvement
-- [ ] Decision: fix before deployment or defer?
+- [x] Bottleneck identified with data
+- [x] Proposed optimization with expected improvement
+- [x] Decision: fix before deployment or defer?
 
 ## Impact
 
@@ -75,3 +75,7 @@ optimization is not worth the complexity for the current deployment.
 
 If a public release makes full ingest common (new users), revisit with ticket for
 cross-file batching.
+
+## Resolution (2026-08-11)
+
+TBD
