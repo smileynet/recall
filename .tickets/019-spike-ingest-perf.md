@@ -78,4 +78,4 @@ cross-file batching.
 
 ## Resolution (2026-08-11)
 
-TBD
+Bottleneck identified: small per-file batch sizes + per-file DB transactions + no pipelining explain the 18× gap between raw embedding throughput and real ingest speed. Decision: DEFER — incremental ingest (the common case) takes seconds; full ingest is one-time only. Revisit if public release makes fresh setup common.
