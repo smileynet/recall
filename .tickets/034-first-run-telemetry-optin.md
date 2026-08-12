@@ -62,4 +62,4 @@ this change before promoting the release.
 
 ## Resolution (2026-08-12)
 
-TBD
+Implemented first-run opt-in prompt via `first_run_prompt()` in telemetry.rs. Default is disabled (N). Uses `std::io::IsTerminal` for TTY detection. Non-interactive environments silently save disabled config. Prompt outputs to stderr to avoid polluting command output. All 62 tests pass.
