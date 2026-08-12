@@ -1,7 +1,7 @@
 ---
 id: 34
 title: "First-run opt-in prompt for telemetry and logging"
-status: open
+status: done
 priority: normal
 blocked_by: []
 estimate: 1h
@@ -47,15 +47,19 @@ prompt.
 
 ## Acceptance criteria
 
-- [ ] New users get prompted on first interactive run
-- [ ] Choice is persisted to config.toml
-- [ ] Non-interactive first run silently defaults to off
-- [ ] Existing users (config exists) are not prompted
-- [ ] DO_NOT_TRACK/CI overrides still work
-- [ ] Our dev machine: unchanged (config already exists with enabled=true)
+- [x] New users get prompted on first interactive run
+- [x] Choice is persisted to config.toml
+- [x] Non-interactive first run silently defaults to off
+- [x] Existing users (config exists) are not prompted
+- [x] DO_NOT_TRACK/CI overrides still work
+- [x] Our dev machine: unchanged (config already exists with enabled=true)
 
 ## Release gate
 
 This must be done before the public release binary reaches users. The v0.1.0
 tag is already pushed but if CI builds succeed, we should do a v0.1.1 with
 this change before promoting the release.
+
+## Resolution (2026-08-12)
+
+TBD
