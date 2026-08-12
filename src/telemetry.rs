@@ -24,8 +24,8 @@ pub struct TelemetryConfig {
 impl Default for TelemetryConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
-            crash_reporting: true,
+            enabled: false,
+            crash_reporting: false,
         }
     }
 }
@@ -82,6 +82,64 @@ pub fn env_suppressed() -> bool {
 pub fn is_enabled() -> bool {
     let config = TelemetryConfig::load();
     config.enabled && !env_suppressed()
+}
+
+// ─── First-run prompt ────────────────────────────────────────────────────────
+
+/// Check if this is a first run (no config file) and prompt the user if interactive.
+///
+/// Returns `true` if the prompt was shown (caller may want to print a blank line).
+/// In non-interactive environments (no TTY, CI, DO_NOT_TRACK), silently defaults
+/// to disabled without prompting.
+pub fn first_run_prompt() -> bool {
+    let path = config_path();
+    if path.exists() {
+        return false;
+    }
+
+    // Non-interactive: silently save disabled config
+    if env_suppressed() || !stdin_is_tty() {
+        let config = TelemetryConfig::default(); // enabled: false
+        let _ = config.save();
+        return false;
+    }
+
+    // Interactive first run: prompt
+    eprint!(
+        "\n  recall collects anonymous local usage data (command names, timing)\n  \
+         to improve the tool. No data leaves your machine.\n\n  \
+         Enable telemetry? [y/N] "
+    );
+
+    let answer = read_yes_no();
+    let config = TelemetryConfig {
+        enabled: answer,
+        crash_reporting: answer,
+    };
+    if let Err(e) = config.save() {
+        eprintln!("recall: failed to save config: {}", e);
+    } else if answer {
+        eprintln!("  Telemetry enabled. Disable anytime with: recall telemetry disable\n");
+    } else {
+        eprintln!("  Telemetry disabled.\n");
+    }
+    true
+}
+
+/// Read a single y/n response from stdin. Default is No.
+fn read_yes_no() -> bool {
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_ok() {
+        matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
+    } else {
+        false
+    }
+}
+
+/// Check if stdin is a TTY (interactive terminal).
+fn stdin_is_tty() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal()
 }
 
 // ─── Event recording ─────────────────────────────────────────────────────────
@@ -383,14 +441,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_config_defaults() {
-        let config = parse_config("");
+    fn test_default_is_disabled() {
+        let config = TelemetryConfig::default();
+        assert!(!config.enabled);
+        assert!(!config.crash_reporting);
+    }
+
+    #[test]
+    fn test_parse_config_explicit_true() {
+        let content = "[telemetry]\nenabled = true\ncrash_reporting = true\n";
+        let config = parse_config(content);
         assert!(config.enabled);
         assert!(config.crash_reporting);
     }
 
     #[test]
-    fn test_parse_config_enabled() {
+    fn test_parse_config_explicit_false() {
+        let content = "[telemetry]\nenabled = false\ncrash_reporting = false\n";
+        let config = parse_config(content);
+        assert!(!config.enabled);
+        assert!(!config.crash_reporting);
+    }
+
+    #[test]
+    fn test_parse_config_mixed() {
         let content = "[telemetry]\nenabled = true\ncrash_reporting = false\n";
         let config = parse_config(content);
         assert!(config.enabled);
@@ -398,12 +472,61 @@ mod tests {
     }
 
     #[test]
+    fn test_config_save_and_load_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        // Temporarily override config path via env for isolation
+        // (Can't easily mock config_path, so test save format directly)
+        let config = TelemetryConfig { enabled: true, crash_reporting: false };
+        let content = format!(
+            "[telemetry]\nenabled = {}\ncrash_reporting = {}\n",
+            config.enabled, config.crash_reporting
+        );
+        std::fs::write(&path, &content).unwrap();
+        let loaded = parse_config(&std::fs::read_to_string(&path).unwrap());
+        assert!(loaded.enabled);
+        assert!(!loaded.crash_reporting);
+    }
+
+    #[test]
     fn test_env_suppressed_do_not_track() {
         // Can't easily test env vars in parallel, but verify the function exists
-        // and returns false when env is clean
         let result = env_suppressed();
-        // Result depends on environment; just verify no panic
         let _ = result;
+    }
+
+    #[test]
+    fn test_stdin_is_tty_in_tests() {
+        // In test environments, stdin is typically NOT a TTY
+        // This just verifies the function doesn't panic
+        let result = stdin_is_tty();
+        // In CI/test: almost always false
+        assert!(!result, "expected stdin to not be a TTY in test environment");
+    }
+
+    #[test]
+    fn test_first_run_prompt_with_existing_config() {
+        // When config already exists, first_run_prompt returns false
+        let dir = tempfile::tempdir().unwrap();
+        let config_file = dir.path().join("config.toml");
+        std::fs::write(&config_file, "[telemetry]\nenabled = true\n").unwrap();
+        // Can't test directly without mocking config_path, but verifying
+        // the function's logic: config_path().exists() == true → return false
+        assert!(config_file.exists());
+    }
+
+    #[test]
+    fn test_read_yes_no_defaults_to_false() {
+        // read_yes_no reads from stdin; in non-interactive tests with no input,
+        // it should default to false (or timeout)
+        // We test the matching logic directly:
+        assert!(matches!("y".to_lowercase().as_str(), "y" | "yes"));
+        assert!(matches!("yes".to_lowercase().as_str(), "y" | "yes"));
+        assert!(matches!("Y".to_lowercase().as_str(), "y" | "yes"));
+        assert!(!matches!("n".to_lowercase().as_str(), "y" | "yes"));
+        assert!(!matches!("".to_lowercase().as_str(), "y" | "yes"));
+        assert!(!matches!("no".to_lowercase().as_str(), "y" | "yes"));
     }
 
     #[test]

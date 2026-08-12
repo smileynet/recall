@@ -115,6 +115,10 @@ enum TelemetryAction {
 
 pub fn run() -> i32 {
     let start = std::time::Instant::now();
+
+    // First-run: prompt for telemetry opt-in if no config exists
+    telemetry::first_run_prompt();
+
     let cli = Cli::parse();
     let command_name = command_name(&cli.command);
 
