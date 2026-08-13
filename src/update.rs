@@ -1,15 +1,63 @@
-//! Self-update: `recall update` downloads and replaces the binary.
+//! Self-update: check once per day, download on `recall update`.
 //!
-//! No passive/automatic update check. Network calls only happen when
-//! the user explicitly runs `recall update`. This avoids unexpected
-//! outbound traffic from a local tool.
+//! Passive check: at most one GitHub API call per 24 hours, gated by a
+//! timestamp file. Skips entirely in non-interactive/CI/DO_NOT_TRACK
+//! environments. Errors are swallowed silently.
+//!
+//! Active update: `recall update` fetches, downloads, and replaces the binary.
 
 use std::fs;
-use std::io::Read;
+use std::io::{IsTerminal, Read};
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 
+use crate::telemetry;
+
 const GITHUB_REPO: &str = "smileynet/recall";
+const CHECK_INTERVAL_SECS: u64 = 24 * 3600; // 24 hours
+
+// ─── Daily update check ──────────────────────────────────────────────────────
+
+/// Check for updates at most once per day. Prints a one-line notice to stderr
+/// if a newer version exists. Silently does nothing on any error or if the
+/// check interval hasn't elapsed.
+pub fn maybe_check_for_update() {
+    if !should_check() {
+        return;
+    }
+
+    // Write timestamp FIRST to prevent repeated attempts on transient failures
+    let _ = write_last_check();
+
+    if let Ok(Some(latest)) = fetch_latest_version() {
+        let current = env!("CARGO_PKG_VERSION");
+        if version_is_newer(current, &latest) {
+            eprintln!(
+                "  recall: update available v{} → v{} (run `recall update` to install)",
+                current, latest
+            );
+        }
+    }
+}
+
+/// Returns true only when ALL conditions hold:
+/// - Not suppressed by environment (DO_NOT_TRACK, CI)
+/// - stderr is a TTY (interactive session)
+/// - Last check was more than 24 hours ago (or never)
+fn should_check() -> bool {
+    if telemetry::env_suppressed() {
+        return false;
+    }
+    if !std::io::stderr().is_terminal() {
+        return false;
+    }
+    match read_last_check() {
+        Some(last) => now_epoch().saturating_sub(last) >= CHECK_INTERVAL_SECS,
+        None => true, // never checked before
+    }
+}
 
 // ─── Self-update command ─────────────────────────────────────────────────────
 
@@ -33,6 +81,9 @@ pub fn cmd_update() -> Result<i32> {
     let binary = extract_binary(&archive_bytes)?;
     replace_self(&binary)?;
 
+    // Reset the check timer so the notice doesn't appear right after updating
+    let _ = write_last_check();
+
     println!("Updated to v{}.", latest);
     Ok(0)
 }
@@ -49,7 +100,7 @@ fn fetch_latest_version() -> Result<Option<String>> {
     let response = ureq::get(&url)
         .set("Accept", "application/vnd.github.v3+json")
         .set("User-Agent", &format!("recall/{}", env!("CARGO_PKG_VERSION")))
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(5))
         .call()
         .context("failed to fetch latest release")?;
 
@@ -209,6 +260,36 @@ fn replace_self(new_binary: &[u8]) -> Result<()> {
     }
 
     Ok(())
+}
+
+// ─── Timestamp cache ─────────────────────────────────────────────────────────
+
+fn read_last_check() -> Option<u64> {
+    let content = fs::read_to_string(last_check_path()).ok()?;
+    content.trim().parse().ok()
+}
+
+fn write_last_check() -> Result<()> {
+    let path = last_check_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, now_epoch().to_string())?;
+    Ok(())
+}
+
+fn last_check_path() -> PathBuf {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".recall").join("last_update_check")
+}
+
+fn now_epoch() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

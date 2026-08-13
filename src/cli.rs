@@ -152,6 +152,8 @@ pub fn run() -> i32 {
     match result {
         Ok(code) => {
             telemetry::record_event(&command_name, start, code, None);
+            // Once-per-day update check (after command output, no-op if <24h since last)
+            update::maybe_check_for_update();
             code
         }
         Err(e) => {
