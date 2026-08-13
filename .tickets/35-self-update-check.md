@@ -64,4 +64,4 @@ check = false
 
 ## Resolution (2026-08-13)
 
-TBD
+Implemented in src/update.rs. Checks GitHub Releases via ureq (5s timeout, max once per 24h). Non-blocking notice after command output. Configurable via [update] section in config.toml. `recall update` downloads correct platform archive, extracts binary, and replaces self. Skips in non-interactive or DO_NOT_TRACK environments. 69 unit tests pass.
