@@ -6,3 +6,4 @@ pub mod scan;
 pub mod search;
 pub mod store;
 pub mod telemetry;
+pub mod update;

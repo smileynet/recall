@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use anyhow::Result;
 
-use recall::{store, search, ingest, embed, migrate, telemetry, logging, recall_log};
+use recall::{store, search, ingest, embed, migrate, telemetry, update, logging, recall_log};
 
 #[derive(Parser)]
 #[command(name = "recall", version, about = "Cross-session semantic memory for AI coding assistants")]
@@ -97,6 +97,8 @@ enum Commands {
         #[arg(long)]
         skip_ingest: bool,
     },
+    /// Check for and install updates
+    Update,
 }
 
 #[derive(Subcommand)]
@@ -144,11 +146,14 @@ pub fn run() -> i32 {
             TelemetryAction::Clear => telemetry::cmd_telemetry_clear(),
         },
         Commands::Sync { force, skip_import, skip_ingest } => cmd_sync(force, skip_import, skip_ingest),
+        Commands::Update => update::cmd_update(),
     };
 
     match result {
         Ok(code) => {
             telemetry::record_event(&command_name, start, code, None);
+            // Check for updates after command output (non-blocking notice)
+            update::check_for_update();
             code
         }
         Err(e) => {
@@ -175,6 +180,7 @@ fn command_name(cmd: &Commands) -> String {
         Commands::Migrate { .. } => "migrate",
         Commands::Telemetry { .. } => "telemetry",
         Commands::Sync { .. } => "sync",
+        Commands::Update => "update",
     }.to_string()
 }
 
