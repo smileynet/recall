@@ -1,186 +1,15 @@
-//! Self-update check and binary update.
+//! Self-update: `recall update` downloads and replaces the binary.
 //!
-//! - Checks GitHub Releases for newer versions (at most once per interval)
-//! - Non-blocking: runs after command completes
-//! - Respects DO_NOT_TRACK, CI, non-interactive, and config settings
-//! - `recall update` downloads and replaces the binary
+//! No passive/automatic update check. Network calls only happen when
+//! the user explicitly runs `recall update`. This avoids unexpected
+//! outbound traffic from a local tool.
 
 use std::fs;
-use std::io::{IsTerminal, Read};
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::io::Read;
 
 use anyhow::{Context, Result};
 
-use crate::telemetry;
-
 const GITHUB_REPO: &str = "smileynet/recall";
-const DEFAULT_INTERVAL_HOURS: u64 = 24;
-
-// ─── Config ──────────────────────────────────────────────────────────────────
-
-#[derive(Debug)]
-pub struct UpdateConfig {
-    pub check: bool,
-    pub interval_hours: u64,
-}
-
-impl Default for UpdateConfig {
-    fn default() -> Self {
-        Self {
-            check: true,
-            interval_hours: DEFAULT_INTERVAL_HOURS,
-        }
-    }
-}
-
-impl UpdateConfig {
-    /// Load update config from ~/.recall/config.toml
-    pub fn load() -> Self {
-        let path = config_path();
-        match fs::read_to_string(&path) {
-            Ok(content) => parse_update_config(&content),
-            Err(_) => Self::default(),
-        }
-    }
-}
-
-fn parse_update_config(content: &str) -> UpdateConfig {
-    let mut config = UpdateConfig::default();
-    let mut in_update_section = false;
-
-    for line in content.lines() {
-        let line = line.trim();
-        if line == "[update]" {
-            in_update_section = true;
-            continue;
-        }
-        if line.starts_with('[') {
-            in_update_section = false;
-            continue;
-        }
-        if !in_update_section {
-            continue;
-        }
-
-        if let Some(val) = line.strip_prefix("check") {
-            if let Some(val) = val.trim().strip_prefix('=') {
-                config.check = val.trim() == "true";
-            }
-        } else if let Some(val) = line.strip_prefix("interval_hours") {
-            if let Some(val) = val.trim().strip_prefix('=') {
-                if let Ok(hours) = val.trim().parse::<u64>() {
-                    config.interval_hours = hours;
-                }
-            }
-        }
-    }
-    config
-}
-
-// ─── Update check ────────────────────────────────────────────────────────────
-
-/// Check for updates if conditions are met. Prints a notice to stderr if a
-/// newer version is available. Returns quietly on any error (non-blocking).
-pub fn check_for_update() {
-    if !should_check() {
-        return;
-    }
-
-    // Run the check — swallow errors silently
-    if let Ok(Some(latest)) = fetch_latest_version() {
-        let current = env!("CARGO_PKG_VERSION");
-        if version_is_newer(current, &latest) {
-            eprintln!(
-                "\n  recall: update available v{} → v{} (run `recall update` to install)\n",
-                current, latest
-            );
-        }
-    }
-
-    // Update the last-check timestamp regardless of result
-    let _ = write_last_check();
-}
-
-/// Determine if we should perform an update check.
-fn should_check() -> bool {
-    // Disabled by environment
-    if telemetry::env_suppressed() {
-        return false;
-    }
-
-    // Non-interactive (scheduled task, piped output)
-    if !std::io::stderr().is_terminal() {
-        return false;
-    }
-
-    // Disabled by config
-    let config = UpdateConfig::load();
-    if !config.check {
-        return false;
-    }
-
-    // Check interval
-    let interval_secs = config.interval_hours * 3600;
-    if let Some(last_check) = read_last_check() {
-        let now = now_epoch();
-        if now.saturating_sub(last_check) < interval_secs {
-            return false;
-        }
-    }
-
-    true
-}
-
-/// Fetch the latest version tag from GitHub Releases API.
-fn fetch_latest_version() -> Result<Option<String>> {
-    let url = format!(
-        "https://api.github.com/repos/{}/releases/latest",
-        GITHUB_REPO
-    );
-
-    let response = ureq::get(&url)
-        .set("Accept", "application/vnd.github.v3+json")
-        .set("User-Agent", &format!("recall/{}", env!("CARGO_PKG_VERSION")))
-        .timeout(std::time::Duration::from_secs(5))
-        .call()
-        .context("failed to fetch latest release")?;
-
-    let body: serde_json::Value = response
-        .into_json()
-        .context("failed to parse release JSON")?;
-
-    let tag = body
-        .get("tag_name")
-        .and_then(|v| v.as_str())
-        .map(|s| s.strip_prefix('v').unwrap_or(s).to_string());
-
-    Ok(tag)
-}
-
-/// Compare version strings. Returns true if `latest` is newer than `current`.
-fn version_is_newer(current: &str, latest: &str) -> bool {
-    let parse = |v: &str| -> Vec<u64> {
-        v.split('.')
-            .map(|p| p.parse::<u64>().unwrap_or(0))
-            .collect()
-    };
-    let c = parse(current);
-    let l = parse(latest);
-
-    // Compare each component
-    for i in 0..c.len().max(l.len()) {
-        let cv = c.get(i).copied().unwrap_or(0);
-        let lv = l.get(i).copied().unwrap_or(0);
-        if lv > cv {
-            return true;
-        }
-        if lv < cv {
-            return false;
-        }
-    }
-    false
-}
 
 // ─── Self-update command ─────────────────────────────────────────────────────
 
@@ -207,6 +36,59 @@ pub fn cmd_update() -> Result<i32> {
     println!("Updated to v{}.", latest);
     Ok(0)
 }
+
+// ─── Version check ──────────────────────────────────────────────────────────
+
+/// Fetch the latest version tag from GitHub Releases API.
+fn fetch_latest_version() -> Result<Option<String>> {
+    let url = format!(
+        "https://api.github.com/repos/{}/releases/latest",
+        GITHUB_REPO
+    );
+
+    let response = ureq::get(&url)
+        .set("Accept", "application/vnd.github.v3+json")
+        .set("User-Agent", &format!("recall/{}", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(10))
+        .call()
+        .context("failed to fetch latest release")?;
+
+    let body: serde_json::Value = response
+        .into_json()
+        .context("failed to parse release JSON")?;
+
+    let tag = body
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.strip_prefix('v').unwrap_or(s).to_string());
+
+    Ok(tag)
+}
+
+/// Compare version strings. Returns true if `latest` is newer than `current`.
+fn version_is_newer(current: &str, latest: &str) -> bool {
+    let parse = |v: &str| -> Vec<u64> {
+        v.split('.')
+            .map(|p| p.parse::<u64>().unwrap_or(0))
+            .collect()
+    };
+    let c = parse(current);
+    let l = parse(latest);
+
+    for i in 0..c.len().max(l.len()) {
+        let cv = c.get(i).copied().unwrap_or(0);
+        let lv = l.get(i).copied().unwrap_or(0);
+        if lv > cv {
+            return true;
+        }
+        if lv < cv {
+            return false;
+        }
+    }
+    false
+}
+
+// ─── Download and install ────────────────────────────────────────────────────
 
 /// Find the correct asset URL for this platform.
 fn find_asset_url(version: &str) -> Result<String> {
@@ -308,7 +190,6 @@ fn replace_self(new_binary: &[u8]) -> Result<()> {
             .context("failed to rename current binary")?;
         fs::write(&current_exe, new_binary)
             .context("failed to write new binary")?;
-        // Clean up old binary (best effort)
         let _ = fs::remove_file(&backup);
     } else {
         // Unix: write to temp, set executable, rename (atomic on same filesystem)
@@ -328,45 +209,6 @@ fn replace_self(new_binary: &[u8]) -> Result<()> {
     }
 
     Ok(())
-}
-
-// ─── Persistence ─────────────────────────────────────────────────────────────
-
-fn read_last_check() -> Option<u64> {
-    let path = last_check_path();
-    let content = fs::read_to_string(path).ok()?;
-    content.trim().parse().ok()
-}
-
-fn write_last_check() -> Result<()> {
-    let path = last_check_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&path, now_epoch().to_string())?;
-    Ok(())
-}
-
-fn last_check_path() -> PathBuf {
-    recall_dir().join("last_update_check")
-}
-
-fn recall_dir() -> PathBuf {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".recall")
-}
-
-fn config_path() -> PathBuf {
-    recall_dir().join("config.toml")
-}
-
-fn now_epoch() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -396,28 +238,6 @@ mod tests {
     fn test_version_different_lengths() {
         assert!(version_is_newer("0.1", "0.1.1"));
         assert!(!version_is_newer("0.1.1", "0.1"));
-    }
-
-    #[test]
-    fn test_parse_update_config_defaults() {
-        let config = parse_update_config("");
-        assert!(config.check);
-        assert_eq!(config.interval_hours, 24);
-    }
-
-    #[test]
-    fn test_parse_update_config_disabled() {
-        let content = "[update]\ncheck = false\ninterval_hours = 12\n";
-        let config = parse_update_config(content);
-        assert!(!config.check);
-        assert_eq!(config.interval_hours, 12);
-    }
-
-    #[test]
-    fn test_parse_update_config_ignores_other_sections() {
-        let content = "[telemetry]\nenabled = true\n\n[update]\ncheck = false\n";
-        let config = parse_update_config(content);
-        assert!(!config.check);
     }
 
     #[test]

@@ -152,8 +152,6 @@ pub fn run() -> i32 {
     match result {
         Ok(code) => {
             telemetry::record_event(&command_name, start, code, None);
-            // Check for updates after command output (non-blocking notice)
-            update::check_for_update();
             code
         }
         Err(e) => {
