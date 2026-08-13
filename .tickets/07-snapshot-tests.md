@@ -1,8 +1,8 @@
 ---
-id: "007"
+id: "07"
 title: "Snapshot tests: CLI output format regression"
 status: done
-blocked_by: ["002"]
+blocked_by: ["02"]
 estimate: 45min
 ---
 

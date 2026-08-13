@@ -1,5 +1,5 @@
 ---
-id: "025"
+id: "25"
 title: "Add `recall sync` subcommand (ingest + import-all)"
 status: done
 blocked_by: []

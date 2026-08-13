@@ -1,5 +1,5 @@
 ---
-id: "024"
+id: "24"
 title: "Fix README model cache size claim (~83MB → ~416MB)"
 status: done
 blocked_by: []

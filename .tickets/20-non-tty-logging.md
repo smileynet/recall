@@ -1,5 +1,5 @@
 ---
-id: "020"
+id: "20"
 title: "Auto-log to file when running non-interactively (scheduled task support)"
 status: done
 blocked_by: []

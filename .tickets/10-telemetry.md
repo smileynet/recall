@@ -1,5 +1,5 @@
 ---
-id: "010"
+id: "10"
 title: "Add local telemetry + crash reporting (opt-in)"
 status: done
 blocked_by: []

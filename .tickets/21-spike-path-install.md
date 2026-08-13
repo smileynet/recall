@@ -1,5 +1,5 @@
 ---
-id: "021"
+id: "21"
 title: "Spike: verify Rust binary PATH installation on Windows"
 status: done
 priority: high

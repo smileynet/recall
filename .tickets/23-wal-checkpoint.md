@@ -1,5 +1,5 @@
 ---
-id: "023"
+id: "23"
 title: "Add WAL checkpoint after large batch operations"
 status: done
 blocked_by: []

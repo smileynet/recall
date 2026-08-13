@@ -1,8 +1,8 @@
 ---
-id: "030"
+id: "30"
 title: "Cut v0.1.0 public release via cargo-dist"
 status: done
-blocked_by: ["029"]
+blocked_by: ["29"]
 estimate: 30min
 ---
 

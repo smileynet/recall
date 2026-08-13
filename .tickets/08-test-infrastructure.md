@@ -1,5 +1,5 @@
 ---
-id: "008"
+id: "08"
 title: "Test infrastructure: shared helpers, fixtures, OnceLock embedder"
 status: done
 priority: high

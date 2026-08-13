@@ -1,5 +1,5 @@
 ---
-id: "028"
+id: "28"
 title: "Explore kiro-cli v3 session format and identify breaking changes"
 status: done
 type: spike

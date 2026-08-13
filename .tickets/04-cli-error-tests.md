@@ -1,9 +1,9 @@
 ---
-id: "004"
+id: "04"
 title: "E2E tests: CLI error handling and arg validation"
 status: done
 priority: high
-blocked_by: ["002"]
+blocked_by: ["02"]
 estimate: 45min
 ---
 

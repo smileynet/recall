@@ -1,9 +1,9 @@
 ---
-id: "005"
+id: "05"
 title: "Contract tests: health --json and prime output format"
 status: done
 priority: high
-blocked_by: ["002"]
+blocked_by: ["02"]
 estimate: 45min
 ---
 

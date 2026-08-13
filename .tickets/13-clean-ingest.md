@@ -1,9 +1,9 @@
 ---
-id: "013"
+id: "13"
 title: "Clean full ingest: delete old DB, ingest all sessions + import all .memory/"
 status: done
 priority: high
-blocked_by: ["011", "012"]
+blocked_by: ["11", "12"]
 estimate: 30min (+ ~20min ingest time)
 ---
 
