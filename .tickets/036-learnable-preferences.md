@@ -1,8 +1,7 @@
 ---
-id: 36
+id: "036"
 title: "Explore learnable preferences — feedback-driven memory with scoping and decay"
 status: open
-priority: normal
 blocked_by: []
 ---
 

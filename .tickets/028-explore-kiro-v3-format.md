@@ -1,8 +1,7 @@
 ---
-id: 28
+id: "028"
 title: "Explore kiro-cli v3 session format and identify breaking changes"
 status: done
-priority: normal
 type: spike
 blocked_by: []
 estimate: 2h

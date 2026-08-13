@@ -3,7 +3,6 @@ id: "038"
 title: "Adopt Agent Plugins standard — own and deploy recall skill from this repo"
 status: open
 blocked_by: []
-priority: normal
 ---
 
 # Adopt Agent Plugins Standard

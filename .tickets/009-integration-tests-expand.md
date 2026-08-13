@@ -1,9 +1,8 @@
 ---
-id: 9
+id: "009"
 title: "Integration tests: expand coverage for migrate, import, multi-format ingest"
 status: done
-priority: normal
-blocked_by: [8]
+blocked_by: ["008"]
 estimate: 1h
 ---
 

@@ -1,8 +1,7 @@
 ---
-id: 26
+id: "026"
 title: "Spike: cargo-dist + load-dynamic feasibility for public release"
 status: done
-priority: normal
 type: spike
 blocked_by: []
 estimate: 1h

@@ -1,5 +1,5 @@
 ---
-id: 2
+id: "002"
 title: "Spike: evaluate insta-cmd for CLI snapshot testing"
 status: done
 priority: high

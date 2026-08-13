@@ -1,8 +1,7 @@
 ---
-id: 23
+id: "023"
 title: "Add WAL checkpoint after large batch operations"
 status: done
-priority: normal
 blocked_by: []
 estimate: 10min
 ---

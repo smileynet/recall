@@ -1,8 +1,7 @@
 ---
-id: 19
+id: "019"
 title: "Spike: ingest performance — why 20 min for 1600 files?"
 status: done
-priority: normal
 type: spike
 blocked_by: []
 estimate: 30min

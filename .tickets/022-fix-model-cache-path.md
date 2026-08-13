@@ -1,5 +1,5 @@
 ---
-id: 22
+id: "022"
 title: "Fix model cache path — use ~/.recall/models/ instead of CWD-relative"
 status: done
 priority: high

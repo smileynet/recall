@@ -1,10 +1,9 @@
 ---
-id: 18
+id: "018"
 title: "Spike: profile hook — what should it do with Rust binary?"
 status: done
-priority: normal
 type: spike
-blocked_by: [11]
+blocked_by: ["011"]
 estimate: 20min
 ---
 

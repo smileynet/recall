@@ -1,9 +1,8 @@
 ---
-id: 14
+id: "014"
 title: "Update crew-research: replace Python recall references with Rust binary"
 status: done
-priority: normal
-blocked_by: [13]
+blocked_by: ["013"]
 estimate: 1h
 ---
 

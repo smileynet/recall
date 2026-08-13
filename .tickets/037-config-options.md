@@ -1,8 +1,7 @@
 ---
-id: 37
+id: "037"
 title: "Explore config options for user-tunable behaviors"
 status: open
-priority: normal
 blocked_by: []
 estimate: 2h
 ---

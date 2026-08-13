@@ -1,5 +1,5 @@
 ---
-id: 16
+id: "016"
 title: "Spike: CLI parity gap analysis (Rust vs Python flags)"
 status: done
 priority: high

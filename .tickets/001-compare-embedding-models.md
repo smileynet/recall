@@ -1,8 +1,7 @@
 ---
-id: 1
+id: "001"
 title: "Compare bge-base vs bge-small for performance and accuracy"
 status: done
-priority: normal
 blocked_by: []
 ---
 
