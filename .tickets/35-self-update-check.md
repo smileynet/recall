@@ -1,7 +1,7 @@
 ---
 id: "035"
 title: "Self-update check on startup (configurable, enabled by default)"
-status: open
+status: done
 blocked_by: ["030"]
 estimate: 2h
 ---
@@ -56,8 +56,12 @@ check = false
 
 ## Acceptance criteria
 
-- [ ] Update check runs on first interactive command (after 24h gap)
-- [ ] Notice printed when newer version exists
-- [ ] No network call when within interval, non-interactive, or DO_NOT_TRACK=1
-- [ ] Configurable via config.toml
-- [ ] `recall update` downloads and installs latest (stretch)
+- [x] Update check runs on first interactive command (after 24h gap)
+- [x] Notice printed when newer version exists
+- [x] No network call when within interval, non-interactive, or DO_NOT_TRACK=1
+- [x] Configurable via config.toml
+- [x] `recall update` downloads and installs latest (stretch)
+
+## Resolution (2026-08-13)
+
+TBD
