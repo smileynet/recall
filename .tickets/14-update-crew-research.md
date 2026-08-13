@@ -35,7 +35,7 @@ estimate: 1h
 
 ## Acceptance criteria
 
-- [ ] No skill/steering file references Python-specific install (uv, pip, venv)
-- [ ] Doctor.sh still works with Rust health --json output
-- [ ] Profile hooks work with Rust binary (tested manually)
-- [ ] `mise run recall:status` works
+- [x] No skill/steering file references Python-specific install (uv, pip, venv)
+- [x] Doctor.sh still works with Rust health --json output
+- [x] Profile hooks work with Rust binary (tested manually)
+- [x] `mise run recall:status` works

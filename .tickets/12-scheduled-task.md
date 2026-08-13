@@ -42,8 +42,8 @@ Register-ScheduledTask -TaskName "RecallIngest" -Action $Action `
 
 ## Acceptance criteria
 
-- [ ] Rust binary installed to ~/.cargo/bin/recall.exe
-- [ ] `recall --version` shows Rust version (not Python 0.2.0)
-- [ ] New scheduled task registered (30 min interval)
-- [ ] Legacy task disabled
-- [ ] `recall health --json` shows `last_ingest_ts` updating after task fires
+- [x] Rust binary installed to ~/.cargo/bin/recall.exe
+- [x] `recall --version` shows Rust version (not Python 0.2.0)
+- [x] New scheduled task registered (30 min interval)
+- [x] Legacy task disabled
+- [x] `recall health --json` shows `last_ingest_ts` updating after task fires

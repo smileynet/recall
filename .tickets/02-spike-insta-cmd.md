@@ -27,9 +27,9 @@ Does `insta-cmd` work well for testing recall's CLI output, given that:
 
 ## Success criteria
 
-- [ ] Snapshot tests pass with filtered volatile values
-- [ ] `cargo insta review` shows clean diffs
-- [ ] Decide: use insta-cmd vs assert_cmd+predicates vs both
+- [x] Snapshot tests pass with filtered volatile values
+- [x] `cargo insta review` shows clean diffs
+- [x] Decide: use insta-cmd vs assert_cmd+predicates vs both
 
 ## Output
 

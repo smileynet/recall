@@ -31,6 +31,6 @@ if total_chunks > 0 {
 
 ## Acceptance criteria
 
-- [ ] `~/.recall/last_ingest` written after successful ingest
-- [ ] Contains unix timestamp as plain text
-- [ ] Not written on failed or empty (0 chunks) ingest
+- [x] `~/.recall/last_ingest` written after successful ingest
+- [x] Contains unix timestamp as plain text
+- [x] Not written on failed or empty (0 chunks) ingest

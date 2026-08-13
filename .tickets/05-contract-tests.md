@@ -73,6 +73,6 @@ that adds a few chunks (requires model loading — use OnceLock pattern).
 
 ## Acceptance criteria
 
-- [ ] Tests fail if any required field is removed from health --json
-- [ ] Tests fail if prime output structure changes
-- [ ] Tests document the contract (serve as living documentation)
+- [x] Tests fail if any required field is removed from health --json
+- [x] Tests fail if prime output structure changes
+- [x] Tests document the contract (serve as living documentation)

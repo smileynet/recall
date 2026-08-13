@@ -99,7 +99,7 @@ each finding against current code before changing it.
 - [x] Every finding is independently marked confirmed, rejected, or obsolete
 - [x] Rejected or obsolete findings include evidence and rationale
 - [x] Confirmed findings are corrected
-- [ ] Regression tests cover confirmed defects where practical
+- [x] Regression tests cover confirmed defects where practical
 - [x] Relevant build, test, and lint checks pass
 - [x] Corrected changes receive a fresh review
 

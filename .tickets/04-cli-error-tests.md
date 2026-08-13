@@ -44,6 +44,6 @@ fn with_empty_db(cmd: &mut Command) -> &mut Command {
 
 ## Acceptance criteria
 
-- [ ] All error cases produce non-panic exits with helpful messages
-- [ ] No test requires the embedding model (error cases hit before model load)
-- [ ] Tests run in < 3s total
+- [x] All error cases produce non-panic exits with helpful messages
+- [x] No test requires the embedding model (error cases hit before model load)
+- [x] Tests run in < 3s total

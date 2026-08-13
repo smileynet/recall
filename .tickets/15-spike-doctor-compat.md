@@ -33,6 +33,6 @@ Does the Rust `recall health --json` output satisfy `tools/generator/doctor.sh` 
 
 ## Success criteria
 
-- [ ] Document any fields Rust is missing
-- [ ] Document any type mismatches
-- [ ] Confirm doctor.sh passes or list exact fixes needed
+- [x] Document any fields Rust is missing
+- [x] Document any type mismatches
+- [x] Confirm doctor.sh passes or list exact fixes needed

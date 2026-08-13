@@ -21,5 +21,5 @@ Use `logging::current_log_path()` which already exists.
 
 ## Acceptance criteria
 
-- [ ] `recall health` shows log file path and size when it exists
-- [ ] Shows "(no log)" when no log file exists
+- [x] `recall health` shows log file path and size when it exists
+- [x] Shows "(no log)" when no log file exists

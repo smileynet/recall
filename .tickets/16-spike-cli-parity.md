@@ -36,5 +36,5 @@ What flags/features does the Python recall CLI support that the Rust version doe
 
 ## Success criteria
 
-- [ ] Complete gap list with priority annotations
-- [ ] Decision on which gaps to fill before local deployment
+- [x] Complete gap list with priority annotations
+- [x] Decision on which gaps to fill before local deployment

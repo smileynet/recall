@@ -26,5 +26,5 @@ TRUNCATE mode moves WAL data into the main DB file AND truncates the WAL to zero
 
 ## Acceptance criteria
 
-- [ ] WAL file is small after large operations complete
-- [ ] No performance impact on normal small operations (skip checkpoint when < 100 chunks)
+- [x] WAL file is small after large operations complete
+- [x] No performance impact on normal small operations (skip checkpoint when < 100 chunks)

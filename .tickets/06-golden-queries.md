@@ -48,11 +48,11 @@ Uses shared embedder (OnceLock), embeds all 50 chunks once, returns ready DB.
 
 ## Acceptance criteria
 
-- [ ] 50-chunk corpus covers diverse content types
-- [ ] 15 queries all pass (relevant results in top-5)
-- [ ] Test runs in < 10s (embedding 50 chunks + 15 searches)
-- [ ] Corpus is frozen (changes require deliberate PR review)
-- [ ] Tests prevent accidental search degradation (e.g., if chunking changes break content)
+- [x] 50-chunk corpus covers diverse content types
+- [x] 15 queries all pass (relevant results in top-5)
+- [x] Test runs in < 10s (embedding 50 chunks + 15 searches)
+- [x] Corpus is frozen (changes require deliberate PR review)
+- [x] Tests prevent accidental search degradation (e.g., if chunking changes break content)
 
 ## Notes
 

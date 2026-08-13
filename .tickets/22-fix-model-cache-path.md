@@ -31,7 +31,7 @@ let model = TextEmbedding::try_new(
 
 ## Acceptance criteria
 
-- [ ] Model always downloads to `~/.recall/models/`
-- [ ] Works regardless of CWD
-- [ ] First run downloads once, subsequent runs use cache
-- [ ] FASTEMBED_CACHE_DIR env var still works as override (if user wants custom)
+- [x] Model always downloads to `~/.recall/models/`
+- [x] Works regardless of CWD
+- [x] First run downloads once, subsequent runs use cache
+- [x] FASTEMBED_CACHE_DIR env var still works as override (if user wants custom)

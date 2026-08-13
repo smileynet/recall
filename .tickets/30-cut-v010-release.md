@@ -34,8 +34,8 @@ Ship recall v0.1.0 as a public GitHub release with cross-platform binaries.
 
 - [x] `dist init` config committed
 - [x] Tag v0.1.0 pushed
-- [ ] GitHub Actions completes successfully (in progress — monitor at github.com/smileynet/recall/actions)
-- [ ] Release page has binaries for all 5 targets
+- [x] GitHub Actions completes successfully (in progress — monitor at github.com/smileynet/recall/actions)
+- [x] Release page has binaries for all 5 targets
 - [x] README install instructions match release mechanism
 
 ## Resolution (2026-08-06)

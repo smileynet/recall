@@ -34,5 +34,5 @@ E. **Leave in build dir, use full path** — works for task, ugly for interactiv
 
 ## Success criteria
 
-- [ ] Chosen location documented
-- [ ] Binary accessible from: PowerShell, cmd, Git Bash, Task Scheduler
+- [x] Chosen location documented
+- [x] Binary accessible from: PowerShell, cmd, Git Bash, Task Scheduler

@@ -75,11 +75,11 @@ insta-cmd = "0.6"
 
 ## Acceptance criteria
 
-- [ ] `shared_embedder()` loads model only once across all tests in a binary
-- [ ] `test_db()` provides isolated DB per test (no cross-contamination)
-- [ ] `seeded_db()` returns a searchable DB without each test needing setup
-- [ ] Fixture files cover all three JSONL formats (v2, v3, codex)
-- [ ] Refactor existing integration_test.rs to use common helpers
+- [x] `shared_embedder()` loads model only once across all tests in a binary
+- [x] `test_db()` provides isolated DB per test (no cross-contamination)
+- [x] `seeded_db()` returns a searchable DB without each test needing setup
+- [x] Fixture files cover all three JSONL formats (v2, v3, codex)
+- [x] Refactor existing integration_test.rs to use common helpers
 
 ## Notes
 

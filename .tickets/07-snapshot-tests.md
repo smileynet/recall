@@ -47,10 +47,10 @@ When output changes intentionally:
 
 ## Acceptance criteria
 
-- [ ] All happy-path outputs captured as snapshots
-- [ ] Volatile values filtered (tests don't break on count changes)
-- [ ] `cargo insta review` workflow documented in AGENTS.md
-- [ ] --help snapshots catch accidental flag renames/removes
+- [x] All happy-path outputs captured as snapshots
+- [x] Volatile values filtered (tests don't break on count changes)
+- [x] `cargo insta review` workflow documented in AGENTS.md
+- [x] --help snapshots catch accidental flag renames/removes
 
 ## Notes
 

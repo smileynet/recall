@@ -23,7 +23,7 @@ PowerShell profile.
 
 ## Acceptance criteria
 
-- [ ] Script placed at `~/.recall/profile-hook.ps1`
-- [ ] Sourced from PowerShell profile
-- [ ] Shell opens without visible delay
-- [ ] Background import fires when stale (check logs after)
+- [x] Script placed at `~/.recall/profile-hook.ps1`
+- [x] Sourced from PowerShell profile
+- [x] Shell opens without visible delay
+- [x] Background import fires when stale (check logs after)

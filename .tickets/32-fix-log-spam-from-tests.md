@@ -29,5 +29,5 @@ file logging. Tests always set `RECALL_DB` to a tempdir.
 
 ## Acceptance criteria
 
-- [ ] Test suite doesn't write to ~/.recall/logs/
-- [ ] Real scheduled task runs still log normally
+- [x] Test suite doesn't write to ~/.recall/logs/
+- [x] Real scheduled task runs still log normally

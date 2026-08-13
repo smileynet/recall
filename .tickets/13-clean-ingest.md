@@ -36,8 +36,8 @@ foreach ($root in $projects) {
 
 ## Acceptance criteria
 
-- [ ] Old DB backed up (not deleted permanently)
-- [ ] Fresh ingest completes (~1600 sessions, ~20 min)
-- [ ] All discoverable projects imported
-- [ ] `health --json` shows covered_projects matching discoverable_projects
-- [ ] Search returns relevant results for known queries
+- [x] Old DB backed up (not deleted permanently)
+- [x] Fresh ingest completes (~1600 sessions, ~20 min)
+- [x] All discoverable projects imported
+- [x] `health --json` shows covered_projects matching discoverable_projects
+- [x] Search returns relevant results for known queries

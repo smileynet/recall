@@ -41,8 +41,8 @@ Based on spike #016 comparison of Python vs Rust CLI.
 
 ## Acceptance criteria
 
-- [ ] `recall --version` outputs version
-- [ ] `recall import .memory/ --wing X --force` deletes and reimports
-- [ ] `recall add "fact" --type decision` auto-detects wing from cwd
-- [ ] Ingest skips files modified in last 5 minutes
-- [ ] All existing tests still pass
+- [x] `recall --version` outputs version
+- [x] `recall import .memory/ --wing X --force` deletes and reimports
+- [x] `recall add "fact" --type decision` auto-detects wing from cwd
+- [x] Ingest skips files modified in last 5 minutes
+- [x] All existing tests still pass

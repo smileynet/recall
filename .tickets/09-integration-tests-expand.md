@@ -30,11 +30,11 @@ Create a small SQLite fixture with the Python schema (`drawers` table, `sources`
 
 ## Acceptance criteria
 
-- [ ] All three JSONL formats have test coverage
-- [ ] Import hash-gate has full lifecycle test (add → skip → modify → update → delete)
-- [ ] Wing scoping verified at search layer
-- [ ] Tests use shared_embedder() from common module (fast)
-- [ ] Total integration test time < 10s
+- [x] All three JSONL formats have test coverage
+- [x] Import hash-gate has full lifecycle test (add → skip → modify → update → delete)
+- [x] Wing scoping verified at search layer
+- [x] Tests use shared_embedder() from common module (fast)
+- [x] Total integration test time < 10s
 
 ## Notes
 

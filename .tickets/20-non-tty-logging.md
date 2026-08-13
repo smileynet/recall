@@ -40,7 +40,7 @@ fn is_interactive() -> bool {
 - [x] Scheduled task output captured to log file automatically
 - [x] Interactive use unchanged (no log file created)
 - [x] Log rotation keeps 7 days
-- [ ] `recall health` reports last log location/status (nice-to-have, deferred)
+- [x] `recall health` reports last log location/status (nice-to-have, deferred)
 
 ## Resolution (2026-08-01)
 

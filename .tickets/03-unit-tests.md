@@ -72,9 +72,9 @@ Add `#[cfg(test)] mod tests` to each module with pure logic tests (no DB, no mod
 
 ## Acceptance criteria
 
-- [ ] `cargo test --lib` passes in <1s (no model loading)
-- [ ] All pure functions have at least boundary + happy path coverage
-- [ ] No test depends on external state (DB, files, model)
+- [x] `cargo test --lib` passes in <1s (no model loading)
+- [x] All pure functions have at least boundary + happy path coverage
+- [x] No test depends on external state (DB, files, model)
 
 ## Notes
 
