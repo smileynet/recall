@@ -1,8 +1,8 @@
 ---
-id: "35"
+id: "035"
 title: "Self-update check on startup (configurable, enabled by default)"
 status: open
-blocked_by: ["30"]
+blocked_by: ["030"]
 estimate: 2h
 ---
 

@@ -1,5 +1,5 @@
 ---
-id: "26"
+id: "026"
 title: "Spike: cargo-dist + load-dynamic feasibility for public release"
 status: done
 type: spike
@@ -33,7 +33,7 @@ Research confirmed:
 ```toml
 # Test in Cargo.toml
 [dependencies]
-ort = { version = "02", features = ["load-dynamic"], default-features = false }
+ort = { version = "2", features = ["load-dynamic"], default-features = false }
 # Does fastembed respect this? Or does it override?
 ```
 
@@ -71,7 +71,7 @@ If `load-dynamic` doesn't work with fastembed-rs, document:
 ### 1. load-dynamic WORKS with fastembed
 
 ```toml
-fastembed = { version = "04", default-features = false, features = ["ort-load-dynamic", "hf-hub-native-tls"] }
+fastembed = { version = "4", default-features = false, features = ["ort-load-dynamic", "hf-hub-native-tls"] }
 ```
 
 - Compiles cleanly (pulls in `libloading` crate)

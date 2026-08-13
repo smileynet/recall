@@ -1,5 +1,5 @@
 ---
-id: "08"
+id: "008"
 title: "Test infrastructure: shared helpers, fixtures, OnceLock embedder"
 status: done
 priority: high
@@ -66,10 +66,10 @@ pub fn seeded_db() -> (TempDir, rusqlite::Connection) {
 
 ```toml
 [dev-dependencies]
-tempfile = "03"
+tempfile = "3"
 assert_cmd = "2.0"
 predicates = "3.1"
-insta = { version = "01", features = ["filters"] }
+insta = { version = "1", features = ["filters"] }
 insta-cmd = "0.6"
 ```
 

@@ -1,5 +1,5 @@
 ---
-id: "15"
+id: "015"
 title: "Spike: verify doctor.sh compatibility with Rust health --json"
 status: done
 priority: high

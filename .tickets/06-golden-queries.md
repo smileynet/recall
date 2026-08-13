@@ -1,8 +1,8 @@
 ---
-id: "06"
+id: "006"
 title: "Golden query regression tests for search quality"
 status: done
-blocked_by: ["03"]
+blocked_by: ["003"]
 estimate: 1h
 ---
 

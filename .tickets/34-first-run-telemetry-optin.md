@@ -1,5 +1,5 @@
 ---
-id: "34"
+id: "034"
 title: "First-run opt-in prompt for telemetry and logging"
 status: done
 blocked_by: []
