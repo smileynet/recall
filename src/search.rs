@@ -21,7 +21,8 @@ pub fn hybrid_search(
     let query_embedding = embedder.embed_one(query)?;
     let all_embeddings = store::all_embeddings(conn, wing)?;
 
-    let mut vector_scores: Vec<(i64, f64)> = all_embeddings.iter()
+    let mut vector_scores: Vec<(i64, f64)> = all_embeddings
+        .iter()
         .map(|(id, emb)| (*id, cosine_similarity(&query_embedding, emb)))
         .collect();
     vector_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -56,15 +57,26 @@ pub fn hybrid_search(
 }
 
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
-    let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| (*x as f64) * (*y as f64)).sum();
-    let norm_a: f64 = a.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>().sqrt();
-    let norm_b: f64 = b.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>().sqrt();
+    let dot: f64 = a
+        .iter()
+        .zip(b.iter())
+        .map(|(x, y)| (*x as f64) * (*y as f64))
+        .sum();
+    let norm_a: f64 = a
+        .iter()
+        .map(|x| (*x as f64) * (*x as f64))
+        .sum::<f64>()
+        .sqrt();
+    let norm_b: f64 = b
+        .iter()
+        .map(|x| (*x as f64) * (*x as f64))
+        .sum::<f64>()
+        .sqrt();
     if norm_a == 0.0 || norm_b == 0.0 {
         return 0.0;
     }
     dot / (norm_a * norm_b)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -74,7 +86,10 @@ mod tests {
     fn cosine_identical_vectors() {
         let v = vec![1.0, 2.0, 3.0];
         let sim = cosine_similarity(&v, &v);
-        assert!((sim - 1.0).abs() < 1e-6, "identical vectors should have similarity 1.0");
+        assert!(
+            (sim - 1.0).abs() < 1e-6,
+            "identical vectors should have similarity 1.0"
+        );
     }
 
     #[test]
@@ -82,7 +97,10 @@ mod tests {
         let a = vec![1.0, 0.0, 0.0];
         let b = vec![0.0, 1.0, 0.0];
         let sim = cosine_similarity(&a, &b);
-        assert!(sim.abs() < 1e-6, "orthogonal vectors should have similarity 0.0");
+        assert!(
+            sim.abs() < 1e-6,
+            "orthogonal vectors should have similarity 0.0"
+        );
     }
 
     #[test]
@@ -90,7 +108,10 @@ mod tests {
         let a = vec![1.0, 0.0];
         let b = vec![-1.0, 0.0];
         let sim = cosine_similarity(&a, &b);
-        assert!((sim + 1.0).abs() < 1e-6, "opposite vectors should have similarity -1.0");
+        assert!(
+            (sim + 1.0).abs() < 1e-6,
+            "opposite vectors should have similarity -1.0"
+        );
     }
 
     #[test]
@@ -106,6 +127,10 @@ mod tests {
         let a = vec![1.0, 1.0, 0.0];
         let b = vec![1.0, 1.0, 0.1]; // very close to a
         let sim = cosine_similarity(&a, &b);
-        assert!(sim > 0.95, "nearly identical vectors should have high similarity: {}", sim);
+        assert!(
+            sim > 0.95,
+            "nearly identical vectors should have high similarity: {}",
+            sim
+        );
     }
 }

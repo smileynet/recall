@@ -12,11 +12,66 @@ const CHUNK_SIZE: usize = 800;
 const MIN_CHUNK_SIZE: usize = 30;
 
 const TOPIC_KEYWORDS: &[(&str, &[&str])] = &[
-    ("technical", &["code", "function", "bug", "error", "api", "server", "deploy", "git", "test", "debug", "refactor"]),
-    ("architecture", &["architecture", "design", "pattern", "structure", "interface", "module", "component", "layer"]),
-    ("planning", &["plan", "roadmap", "milestone", "scope", "requirement", "spec", "backlog", "sprint"]),
-    ("decisions", &["decided", "chose", "recommendation", "trade-off", "approach", "option", "prefer", "agree"]),
-    ("problems", &["problem", "issue", "broken", "failed", "crash", "stuck", "workaround", "fix", "solved"]),
+    (
+        "technical",
+        &[
+            "code", "function", "bug", "error", "api", "server", "deploy", "git", "test", "debug",
+            "refactor",
+        ],
+    ),
+    (
+        "architecture",
+        &[
+            "architecture",
+            "design",
+            "pattern",
+            "structure",
+            "interface",
+            "module",
+            "component",
+            "layer",
+        ],
+    ),
+    (
+        "planning",
+        &[
+            "plan",
+            "roadmap",
+            "milestone",
+            "scope",
+            "requirement",
+            "spec",
+            "backlog",
+            "sprint",
+        ],
+    ),
+    (
+        "decisions",
+        &[
+            "decided",
+            "chose",
+            "recommendation",
+            "trade-off",
+            "approach",
+            "option",
+            "prefer",
+            "agree",
+        ],
+    ),
+    (
+        "problems",
+        &[
+            "problem",
+            "issue",
+            "broken",
+            "failed",
+            "crash",
+            "stuck",
+            "workaround",
+            "fix",
+            "solved",
+        ],
+    ),
 ];
 
 /// Write unix timestamp to ~/.recall/last_ingest after successful ingest.
@@ -50,7 +105,10 @@ fn default_sessions_dir() -> PathBuf {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".kiro").join("sessions").join("cli")
+    PathBuf::from(home)
+        .join(".kiro")
+        .join("sessions")
+        .join("cli")
 }
 
 /// Run ingestion: scan for changes, chunk new/modified files, embed, store.
@@ -63,7 +121,10 @@ pub fn run_ingest_with_embedder(path: Option<&str>, embedder: &embed::Embedder) 
     run_ingest_with_embedder_lazy(path, Some(embedder))
 }
 
-fn run_ingest_with_embedder_lazy(path: Option<&str>, shared_embedder: Option<&embed::Embedder>) -> Result<i32> {
+fn run_ingest_with_embedder_lazy(
+    path: Option<&str>,
+    shared_embedder: Option<&embed::Embedder>,
+) -> Result<i32> {
     let dir = path.map(PathBuf::from).unwrap_or_else(default_sessions_dir);
     if !dir.is_dir() {
         anyhow::bail!("session directory not found: {}", dir.display());
@@ -136,8 +197,15 @@ fn run_ingest_with_embedder_lazy(path: Option<&str>, shared_embedder: Option<&em
         store::delete_chunks_by_source(&conn, &file_path.to_string_lossy())?;
         for (chunk, embedding) in chunks.iter().zip(embeddings.iter()) {
             let room = classify_room(chunk);
-            store::insert_chunk(&conn, chunk, &wing, &room, "session",
-                &file_path.to_string_lossy(), embedding)?;
+            store::insert_chunk(
+                &conn,
+                chunk,
+                &wing,
+                &room,
+                "session",
+                &file_path.to_string_lossy(),
+                embedding,
+            )?;
         }
         scan::update_cache(&conn, file_path)?;
         conn.execute("COMMIT", [])?;
@@ -155,8 +223,16 @@ fn run_ingest_with_embedder_lazy(path: Option<&str>, shared_embedder: Option<&em
         }
     }
 
-    recall_log!("  Done: {} files, {} chunks ingested{}", changed.len(), total_chunks,
-        if files_deferred > 0 { format!(" ({} deferred — active)", files_deferred) } else { String::new() });
+    recall_log!(
+        "  Done: {} files, {} chunks ingested{}",
+        changed.len(),
+        total_chunks,
+        if files_deferred > 0 {
+            format!(" ({} deferred — active)", files_deferred)
+        } else {
+            String::new()
+        }
+    );
 
     // Write staleness marker
     if total_chunks > 0 {
@@ -174,7 +250,12 @@ pub fn import_directory(path: &str, wing: &str, force: bool) -> Result<i32> {
 }
 
 /// Import markdown files with a pre-loaded embedder (for shared-embedder use in sync).
-pub fn import_directory_with_embedder(path: &str, wing: &str, force: bool, embedder: &embed::Embedder) -> Result<i32> {
+pub fn import_directory_with_embedder(
+    path: &str,
+    wing: &str,
+    force: bool,
+    embedder: &embed::Embedder,
+) -> Result<i32> {
     let dir = Path::new(path);
     if !dir.is_dir() {
         anyhow::bail!("not a directory: {}", path);
@@ -190,7 +271,11 @@ pub fn import_directory_with_embedder(path: &str, wing: &str, force: bool, embed
             store::delete_import_source(&conn, &src, wing)?;
         }
         if deleted > 0 {
-            recall_log!("  Force: deleted {} existing import chunks for wing '{}'", deleted, wing);
+            recall_log!(
+                "  Force: deleted {} existing import chunks for wing '{}'",
+                deleted,
+                wing
+            );
         }
     }
 
@@ -201,7 +286,8 @@ pub fn import_directory_with_embedder(path: &str, wing: &str, force: bool, embed
     }
 
     // Build set of current file relative paths for orphan detection
-    let current_rel_paths: std::collections::HashSet<String> = md_files.iter()
+    let current_rel_paths: std::collections::HashSet<String> = md_files
+        .iter()
         .filter_map(|f| f.strip_prefix(dir).ok())
         .map(|p| p.to_string_lossy().to_string())
         .collect();
@@ -242,7 +328,7 @@ pub fn import_directory_with_embedder(path: &str, wing: &str, force: bool, embed
         }
 
         // Compute content hash
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let content_hash = format!("{:x}", Sha256::digest(content.as_bytes()));
         let file_size = content.len() as i64;
 
@@ -296,17 +382,36 @@ pub fn import_directory_with_embedder(path: &str, wing: &str, force: bool, embed
         conn.execute("COMMIT", [])?;
 
         // Update manifest
-        store::upsert_import_source(&conn, &rel_path, wing, &content_hash, file_size, chunks.len() as i64)?;
+        store::upsert_import_source(
+            &conn,
+            &rel_path,
+            wing,
+            &content_hash,
+            file_size,
+            chunks.len() as i64,
+        )?;
         total_chunks += chunks.len();
     }
 
     // Summary
     let mut parts = Vec::new();
-    if files_imported > 0 { parts.push(format!("{} new", files_imported)); }
-    if files_updated > 0 { parts.push(format!("{} updated", files_updated)); }
-    if files_skipped > 0 { parts.push(format!("{} unchanged", files_skipped)); }
-    if files_deleted > 0 { parts.push(format!("{} deleted", files_deleted)); }
-    let summary = if parts.is_empty() { "no changes".to_string() } else { parts.join(", ") };
+    if files_imported > 0 {
+        parts.push(format!("{} new", files_imported));
+    }
+    if files_updated > 0 {
+        parts.push(format!("{} updated", files_updated));
+    }
+    if files_skipped > 0 {
+        parts.push(format!("{} unchanged", files_skipped));
+    }
+    if files_deleted > 0 {
+        parts.push(format!("{} deleted", files_deleted));
+    }
+    let summary = if parts.is_empty() {
+        "no changes".to_string()
+    } else {
+        parts.join(", ")
+    };
 
     // Record model metadata
     if total_chunks > 0 {
@@ -333,8 +438,11 @@ fn detect_type_from_frontmatter(content: &str) -> String {
         let fm = &content[3..3 + end];
         for line in fm.lines() {
             let trimmed = line.trim();
-            if trimmed.starts_with("type:") {
-                return trimmed[5..].trim().trim_matches(|c| c == '"' || c == '\'').to_string();
+            if let Some(stripped) = trimmed.strip_prefix("type:") {
+                return stripped
+                    .trim()
+                    .trim_matches(|c| c == '"' || c == '\'')
+                    .to_string();
             }
         }
     }
@@ -387,9 +495,7 @@ fn parse_kiro_v3(content: &str) -> Option<Vec<Message>> {
 
     // Detect: v3 has payload.type
     let first: Value = serde_json::from_str(lines[0]).ok()?;
-    if first.get("payload")?.get("type").is_none() {
-        return None;
-    }
+    first.get("payload")?.get("type")?;
 
     let mut messages = Vec::new();
     for line in &lines {
@@ -405,7 +511,10 @@ fn parse_kiro_v3(content: &str) -> Option<Vec<Message>> {
         }
 
         match ptype {
-            "user" => messages.push(Message { role: Role::User, text: text.to_string() }),
+            "user" => messages.push(Message {
+                role: Role::User,
+                text: text.to_string(),
+            }),
             "assistant" => {
                 // Merge consecutive assistant messages
                 if let Some(last) = messages.last_mut() {
@@ -415,13 +524,20 @@ fn parse_kiro_v3(content: &str) -> Option<Vec<Message>> {
                         continue;
                     }
                 }
-                messages.push(Message { role: Role::Assistant, text: text.to_string() });
+                messages.push(Message {
+                    role: Role::Assistant,
+                    text: text.to_string(),
+                });
             }
             _ => {}
         }
     }
 
-    if messages.len() >= 2 { Some(messages) } else { None }
+    if messages.len() >= 2 {
+        Some(messages)
+    } else {
+        None
+    }
 }
 
 /// Parse kiro-cli v1/v2 JSONL: {version: "v1", kind: "Prompt"|"AssistantMessage", data: {...}}
@@ -482,7 +598,10 @@ fn parse_kiro_v2(content: &str) -> Option<Vec<Message>> {
                     }
                 }
                 if !parts.is_empty() {
-                    messages.push(Message { role: Role::User, text: parts.join("\n") });
+                    messages.push(Message {
+                        role: Role::User,
+                        text: parts.join("\n"),
+                    });
                 }
             }
             "AssistantMessage" => {
@@ -501,10 +620,12 @@ fn parse_kiro_v2(content: &str) -> Option<Vec<Message>> {
                             }
                             "toolUse" => {
                                 if let Some(td) = block.get("data") {
-                                    let name = td.get("name")
+                                    let name = td
+                                        .get("name")
                                         .and_then(|n| n.as_str())
                                         .unwrap_or("unknown");
-                                    let purpose = td.get("input")
+                                    let purpose = td
+                                        .get("input")
                                         .and_then(|i| i.get("__tool_use_purpose"))
                                         .and_then(|p| p.as_str())
                                         .unwrap_or("");
@@ -530,14 +651,21 @@ fn parse_kiro_v2(content: &str) -> Option<Vec<Message>> {
                             continue;
                         }
                     }
-                    messages.push(Message { role: Role::Assistant, text: combined });
+                    messages.push(Message {
+                        role: Role::Assistant,
+                        text: combined,
+                    });
                 }
             }
             _ => {}
         }
     }
 
-    if messages.len() >= 2 { Some(messages) } else { None }
+    if messages.len() >= 2 {
+        Some(messages)
+    } else {
+        None
+    }
 }
 
 /// Parse OpenAI Codex CLI JSONL: {type: "event_msg", payload: {type, message}}
@@ -572,13 +700,23 @@ fn parse_codex(content: &str) -> Option<Vec<Message>> {
         let ptype = payload.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
         match ptype {
-            "user_message" => messages.push(Message { role: Role::User, text: msg.to_string() }),
-            "agent_message" => messages.push(Message { role: Role::Assistant, text: msg.to_string() }),
+            "user_message" => messages.push(Message {
+                role: Role::User,
+                text: msg.to_string(),
+            }),
+            "agent_message" => messages.push(Message {
+                role: Role::Assistant,
+                text: msg.to_string(),
+            }),
             _ => {}
         }
     }
 
-    if messages.len() >= 2 && has_session_meta { Some(messages) } else { None }
+    if messages.len() >= 2 && has_session_meta {
+        Some(messages)
+    } else {
+        None
+    }
 }
 
 // =============================================================================
@@ -612,7 +750,10 @@ fn chunk_messages(messages: &[Message]) -> Vec<String> {
         chunks.push(current.join("\n"));
     }
 
-    chunks.into_iter().filter(|c| c.len() >= MIN_CHUNK_SIZE).collect()
+    chunks
+        .into_iter()
+        .filter(|c| c.len() >= MIN_CHUNK_SIZE)
+        .collect()
 }
 
 // =============================================================================
@@ -622,7 +763,8 @@ fn chunk_messages(messages: &[Message]) -> Vec<String> {
 /// Classify a chunk into a room by keyword scoring.
 fn classify_room(text: &str) -> String {
     // Truncate at a char boundary for the keyword scan
-    let end = text.char_indices()
+    let end = text
+        .char_indices()
         .take_while(|(i, _)| *i < 3000)
         .last()
         .map(|(i, c)| i + c.len_utf8())
@@ -632,7 +774,10 @@ fn classify_room(text: &str) -> String {
     let mut best_score = 0;
 
     for &(room, keywords) in TOPIC_KEYWORDS {
-        let score: usize = keywords.iter().filter(|kw| text_lower.contains(*kw)).count();
+        let score: usize = keywords
+            .iter()
+            .filter(|kw| text_lower.contains(*kw))
+            .count();
         if score > best_score {
             best_score = score;
             best_room = room;
@@ -662,7 +807,8 @@ fn derive_wing_from_session(sessions_dir: &Path, jsonl_path: &Path) -> String {
     }
 
     // Fallback: parent directory name
-    jsonl_path.parent()
+    jsonl_path
+        .parent()
         .and_then(|p| p.file_name())
         .map(|n| n.to_string_lossy().replace('-', "_"))
         .unwrap_or_else(|| "sessions".to_string())
@@ -679,9 +825,8 @@ fn extract_cwd_from_session(sessions_dir: &Path, jsonl_path: &Path) -> Option<St
         let session_dir = jsonl_path.parent()?;
         let meta_path = session_dir.join("session.json");
         if meta_path.exists() {
-            let data: Value = serde_json::from_str(
-                &std::fs::read_to_string(&meta_path).ok()?
-            ).ok()?;
+            let data: Value =
+                serde_json::from_str(&std::fs::read_to_string(&meta_path).ok()?).ok()?;
             let paths = data.get("workspacePaths")?.as_array()?;
             return paths.first()?.as_str().map(|s| s.to_string());
         }
@@ -690,9 +835,8 @@ fn extract_cwd_from_session(sessions_dir: &Path, jsonl_path: &Path) -> Option<St
         let session_id = jsonl_path.file_stem()?.to_str()?;
         let json_path = sessions_dir.join(format!("{}.json", session_id));
         if json_path.exists() {
-            let data: Value = serde_json::from_str(
-                &std::fs::read_to_string(&json_path).ok()?
-            ).ok()?;
+            let data: Value =
+                serde_json::from_str(&std::fs::read_to_string(&json_path).ok()?).ok()?;
             return data.get("cwd")?.as_str().map(|s| s.to_string());
         }
     }
@@ -770,7 +914,6 @@ fn walkdir_md(dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-
 // =============================================================================
 // Unit Tests
 // =============================================================================
@@ -784,8 +927,14 @@ mod tests {
     #[test]
     fn chunk_messages_single_short_message() {
         let messages = vec![
-            Message { role: Role::User, text: "Hello, how does the scan cache work?".to_string() },
-            Message { role: Role::Assistant, text: "It stores mtime and size per file.".to_string() },
+            Message {
+                role: Role::User,
+                text: "Hello, how does the scan cache work?".to_string(),
+            },
+            Message {
+                role: Role::Assistant,
+                text: "It stores mtime and size per file.".to_string(),
+            },
         ];
         let chunks = chunk_messages(&messages);
         assert_eq!(chunks.len(), 1);
@@ -796,18 +945,33 @@ mod tests {
     #[test]
     fn chunk_messages_splits_at_size_limit() {
         let messages = vec![
-            Message { role: Role::User, text: "a".repeat(500) },
-            Message { role: Role::Assistant, text: "b".repeat(500) },
+            Message {
+                role: Role::User,
+                text: "a".repeat(500),
+            },
+            Message {
+                role: Role::Assistant,
+                text: "b".repeat(500),
+            },
         ];
         let chunks = chunk_messages(&messages);
-        assert!(chunks.len() >= 2, "should split since total > CHUNK_SIZE (800)");
+        assert!(
+            chunks.len() >= 2,
+            "should split since total > CHUNK_SIZE (800)"
+        );
     }
 
     #[test]
     fn chunk_messages_user_prefixed() {
         let messages = vec![
-            Message { role: Role::User, text: "user question".to_string() },
-            Message { role: Role::Assistant, text: "assistant answer".to_string() },
+            Message {
+                role: Role::User,
+                text: "user question".to_string(),
+            },
+            Message {
+                role: Role::Assistant,
+                text: "assistant answer".to_string(),
+            },
         ];
         let chunks = chunk_messages(&messages);
         assert!(chunks[0].contains("> user question"));
@@ -817,9 +981,10 @@ mod tests {
 
     #[test]
     fn chunk_messages_discards_tiny_chunks() {
-        let messages = vec![
-            Message { role: Role::User, text: "hi".to_string() },
-        ];
+        let messages = vec![Message {
+            role: Role::User,
+            text: "hi".to_string(),
+        }];
         let chunks = chunk_messages(&messages);
         assert!(chunks.is_empty(), "chunk '> hi' is < MIN_CHUNK_SIZE (30)");
     }
@@ -832,10 +997,16 @@ mod tests {
 
     #[test]
     fn chunk_messages_many_small_messages_accumulate() {
-        let messages: Vec<Message> = (0..20).map(|i| Message {
-            role: if i % 2 == 0 { Role::User } else { Role::Assistant },
-            text: format!("Message number {} with some content here", i),
-        }).collect();
+        let messages: Vec<Message> = (0..20)
+            .map(|i| Message {
+                role: if i % 2 == 0 {
+                    Role::User
+                } else {
+                    Role::Assistant
+                },
+                text: format!("Message number {} with some content here", i),
+            })
+            .collect();
         let chunks = chunk_messages(&messages);
         // 20 messages × ~40 chars = ~800 chars, should produce 1-2 chunks
         assert!(!chunks.is_empty());
@@ -909,29 +1080,44 @@ mod tests {
     fn parse_codex_requires_session_meta() {
         let content = r#"{"type":"event_msg","payload":{"type":"user_message","message":"hello there friend"}}
 {"type":"event_msg","payload":{"type":"agent_message","message":"hi back to you friend"}}"#;
-        assert!(parse_codex(content).is_none(), "codex format requires session_meta");
+        assert!(
+            parse_codex(content).is_none(),
+            "codex format requires session_meta"
+        );
     }
 
     // --- classify_room tests ---
 
     #[test]
     fn classify_room_technical() {
-        assert_eq!(classify_room("The bug in the API server caused a deployment error"), "technical");
+        assert_eq!(
+            classify_room("The bug in the API server caused a deployment error"),
+            "technical"
+        );
     }
 
     #[test]
     fn classify_room_architecture() {
-        assert_eq!(classify_room("The architecture uses a layered design pattern with module interfaces"), "architecture");
+        assert_eq!(
+            classify_room("The architecture uses a layered design pattern with module interfaces"),
+            "architecture"
+        );
     }
 
     #[test]
     fn classify_room_decisions() {
-        assert_eq!(classify_room("We decided to chose this approach as our recommendation"), "decisions");
+        assert_eq!(
+            classify_room("We decided to chose this approach as our recommendation"),
+            "decisions"
+        );
     }
 
     #[test]
     fn classify_room_general_fallback() {
-        assert_eq!(classify_room("The weather is nice today and I like cats"), "general");
+        assert_eq!(
+            classify_room("The weather is nice today and I like cats"),
+            "general"
+        );
     }
 
     #[test]
@@ -961,7 +1147,8 @@ mod tests {
 
     #[test]
     fn chunk_markdown_drops_tiny_sections() {
-        let content = "## A\nhi\n\n## B\nThis section has enough content to survive the minimum size filter.";
+        let content =
+            "## A\nhi\n\n## B\nThis section has enough content to survive the minimum size filter.";
         let chunks = chunk_markdown(content);
         // "hi" is < MIN_CHUNK_SIZE, should be dropped
         assert!(chunks.iter().all(|c| c.len() >= MIN_CHUNK_SIZE));
@@ -972,7 +1159,10 @@ mod tests {
         let long_para = "word ".repeat(200); // ~1000 chars
         let content = format!("## Big Section\n{}\n\n{}", long_para, long_para);
         let chunks = chunk_markdown(&content);
-        assert!(chunks.len() >= 2, "oversized section should split at paragraph boundary");
+        assert!(
+            chunks.len() >= 2,
+            "oversized section should split at paragraph boundary"
+        );
     }
 
     #[test]

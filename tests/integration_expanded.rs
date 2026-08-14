@@ -8,7 +8,9 @@ use recall::{embed, scan, search, store};
 use tempfile::TempDir;
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests").join("fixtures")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
 }
 
 fn setup_db(dir: &TempDir) -> rusqlite::Connection {
@@ -32,22 +34,52 @@ fn test_wing_scoped_search() {
     let recall_content = "The scan cache uses mtime and file size for change detection";
 
     let emb1 = embedder.embed_one(web_content).unwrap();
-    store::insert_chunk(&conn, web_content, "web_app", "auth", "decision", "test", &emb1).unwrap();
+    store::insert_chunk(
+        &conn,
+        web_content,
+        "web_app",
+        "auth",
+        "decision",
+        "test",
+        &emb1,
+    )
+    .unwrap();
 
     let emb2 = embedder.embed_one(recall_content).unwrap();
-    store::insert_chunk(&conn, recall_content, "recall", "architecture", "fact", "test", &emb2).unwrap();
+    store::insert_chunk(
+        &conn,
+        recall_content,
+        "recall",
+        "architecture",
+        "fact",
+        "test",
+        &emb2,
+    )
+    .unwrap();
 
     // Unscoped search finds both
     let all = search::hybrid_search(&conn, embedder, "authentication tokens", None, 5).unwrap();
     assert!(!all.is_empty());
 
     // Wing-scoped search only finds web_app chunks
-    let scoped = search::hybrid_search(&conn, embedder, "authentication tokens", Some("web_app"), 5).unwrap();
+    let scoped =
+        search::hybrid_search(&conn, embedder, "authentication tokens", Some("web_app"), 5)
+            .unwrap();
     assert!(!scoped.is_empty());
-    assert!(scoped.iter().all(|r| r.wing == "web_app"), "all results should be from web_app wing");
+    assert!(
+        scoped.iter().all(|r| r.wing == "web_app"),
+        "all results should be from web_app wing"
+    );
 
     // Searching wrong wing returns nothing relevant
-    let wrong_wing = search::hybrid_search(&conn, embedder, "authentication tokens", Some("nonexistent"), 5).unwrap();
+    let wrong_wing = search::hybrid_search(
+        &conn,
+        embedder,
+        "authentication tokens",
+        Some("nonexistent"),
+        5,
+    )
+    .unwrap();
     assert!(wrong_wing.is_empty());
 }
 
@@ -79,7 +111,11 @@ fn test_import_hash_gate_lifecycle() {
 
     // Same hash = skip
     let same_hash = store::get_import_source_hash(&conn, "test.md", "fresh_wing").unwrap();
-    assert_eq!(same_hash.as_deref(), Some(hash1.as_str()), "unchanged file should match stored hash");
+    assert_eq!(
+        same_hash.as_deref(),
+        Some(hash1.as_str()),
+        "unchanged file should match stored hash"
+    );
 
     // Modified file has different hash
     std::fs::write(&md_file, "## Architecture\n\nCompletely rewritten architecture using a new approach with different storage layer.").unwrap();
@@ -88,7 +124,7 @@ fn test_import_hash_gate_lifecycle() {
 }
 
 fn compute_file_hash(path: &std::path::Path) -> String {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let content = std::fs::read_to_string(path).unwrap();
     format!("{:x}", Sha256::digest(content.as_bytes()))
 }
@@ -106,11 +142,17 @@ fn test_scan_detects_v3_session_dir() {
     // Our scan_for_changes only looks for *.jsonl at depth 1
     // v3 format is handled differently — it looks in subdirs
     // For now, verify the fixture files exist and are parseable
-    let v3_messages = fixtures_dir().join("session-v3").join("sess_test").join("messages.jsonl");
+    let v3_messages = fixtures_dir()
+        .join("session-v3")
+        .join("sess_test")
+        .join("messages.jsonl");
     assert!(v3_messages.exists(), "v3 fixture should exist");
 
     let content = std::fs::read_to_string(&v3_messages).unwrap();
-    assert!(content.contains("payload"), "v3 format should have payload field");
+    assert!(
+        content.contains("payload"),
+        "v3 format should have payload field"
+    );
 }
 
 // =============================================================================
@@ -126,15 +168,34 @@ fn test_ingested_chunks_get_classified_rooms() {
     // Ingest technical content
     let tech_content = "The bug in the API server caused the deployment to fail with an error code";
     let emb = embedder.embed_one(tech_content).unwrap();
-    store::insert_chunk(&conn, tech_content, "test", "technical", "session", "test", &emb).unwrap();
+    store::insert_chunk(
+        &conn,
+        tech_content,
+        "test",
+        "technical",
+        "session",
+        "test",
+        &emb,
+    )
+    .unwrap();
 
     // Ingest architecture content
     let arch_content = "The module interface design uses a layered architecture pattern with clear component boundaries";
     let emb = embedder.embed_one(arch_content).unwrap();
-    store::insert_chunk(&conn, arch_content, "test", "architecture", "session", "test", &emb).unwrap();
+    store::insert_chunk(
+        &conn,
+        arch_content,
+        "test",
+        "architecture",
+        "session",
+        "test",
+        &emb,
+    )
+    .unwrap();
 
     // Search should find both
-    let results = search::hybrid_search(&conn, embedder, "system design patterns", Some("test"), 5).unwrap();
+    let results =
+        search::hybrid_search(&conn, embedder, "system design patterns", Some("test"), 5).unwrap();
     assert!(!results.is_empty());
 
     // Verify rooms are set correctly
@@ -156,7 +217,9 @@ fn test_scan_fixtures_codex_detected() {
 
     // Should detect the codex fixture file
     let codex_detected = changed.iter().any(|p| {
-        p.file_name().map(|n| n.to_string_lossy().contains("codex")).unwrap_or(false)
+        p.file_name()
+            .map(|n| n.to_string_lossy().contains("codex"))
+            .unwrap_or(false)
     });
     assert!(codex_detected, "scan should detect session-codex.jsonl");
 }

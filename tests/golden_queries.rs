@@ -53,7 +53,10 @@ fn assert_relevant_in_top_k(results: &[store::SearchResult], keywords: &[&str], 
         query,
         keywords,
         results.len(),
-        results.iter().map(|r| &r.content[..r.content.len().min(60)]).collect::<Vec<_>>()
+        results
+            .iter()
+            .map(|r| &r.content[..r.content.len().min(60)])
+            .collect::<Vec<_>>()
     );
 }
 
@@ -65,15 +68,27 @@ fn assert_relevant_in_top_k(results: &[store::SearchResult], keywords: &[&str], 
 fn golden_authentication_decision() {
     let (_dir, conn) = setup_golden_corpus();
     let embedder = common::shared_embedder();
-    let results = search::hybrid_search(&conn, embedder, "what did we decide about authentication", None, 5).unwrap();
-    assert_relevant_in_top_k(&results, &["jwt", "token", "auth", "refresh"], "authentication");
+    let results = search::hybrid_search(
+        &conn,
+        embedder,
+        "what did we decide about authentication",
+        None,
+        5,
+    )
+    .unwrap();
+    assert_relevant_in_top_k(
+        &results,
+        &["jwt", "token", "auth", "refresh"],
+        "authentication",
+    );
 }
 
 #[test]
 fn golden_rust_choice() {
     let (_dir, conn) = setup_golden_corpus();
     let embedder = common::shared_embedder();
-    let results = search::hybrid_search(&conn, embedder, "why did we choose Rust", None, 5).unwrap();
+    let results =
+        search::hybrid_search(&conn, embedder, "why did we choose Rust", None, 5).unwrap();
     assert_relevant_in_top_k(&results, &["rust", "go", "fastembed"], "rust choice");
 }
 
@@ -81,7 +96,14 @@ fn golden_rust_choice() {
 fn golden_scan_cache() {
     let (_dir, conn) = setup_golden_corpus();
     let embedder = common::shared_embedder();
-    let results = search::hybrid_search(&conn, embedder, "how does the scan cache detect file changes", None, 5).unwrap();
+    let results = search::hybrid_search(
+        &conn,
+        embedder,
+        "how does the scan cache detect file changes",
+        None,
+        5,
+    )
+    .unwrap();
     assert_relevant_in_top_k(&results, &["scan", "cache", "mtime", "size"], "scan cache");
 }
 
@@ -89,39 +111,72 @@ fn golden_scan_cache() {
 fn golden_search_algorithm() {
     let (_dir, conn) = setup_golden_corpus();
     let embedder = common::shared_embedder();
-    let results = search::hybrid_search(&conn, embedder, "how does hybrid search combine BM25 and vector results", None, 5).unwrap();
-    assert_relevant_in_top_k(&results, &["rrf", "bm25", "vector", "fusion", "rank"], "search algorithm");
+    let results = search::hybrid_search(
+        &conn,
+        embedder,
+        "how does hybrid search combine BM25 and vector results",
+        None,
+        5,
+    )
+    .unwrap();
+    assert_relevant_in_top_k(
+        &results,
+        &["rrf", "bm25", "vector", "fusion", "rank"],
+        "search algorithm",
+    );
 }
 
 #[test]
 fn golden_error_handling() {
     let (_dir, conn) = setup_golden_corpus();
     let embedder = common::shared_embedder();
-    let results = search::hybrid_search(&conn, embedder, "error handling approach", None, 5).unwrap();
-    assert_relevant_in_top_k(&results, &["anyhow", "error", "thiserror"], "error handling");
+    let results =
+        search::hybrid_search(&conn, embedder, "error handling approach", None, 5).unwrap();
+    assert_relevant_in_top_k(
+        &results,
+        &["anyhow", "error", "thiserror"],
+        "error handling",
+    );
 }
 
 #[test]
 fn golden_file_scanning() {
     let (_dir, conn) = setup_golden_corpus();
     let embedder = common::shared_embedder();
-    let results = search::hybrid_search(&conn, embedder, "parallel file scanning performance", None, 5).unwrap();
-    assert_relevant_in_top_k(&results, &["jwalk", "parallel", "scan", "42ms"], "file scanning");
+    let results = search::hybrid_search(
+        &conn,
+        embedder,
+        "parallel file scanning performance",
+        None,
+        5,
+    )
+    .unwrap();
+    assert_relevant_in_top_k(
+        &results,
+        &["jwalk", "parallel", "scan", "42ms"],
+        "file scanning",
+    );
 }
 
 #[test]
 fn golden_deployment() {
     let (_dir, conn) = setup_golden_corpus();
     let embedder = common::shared_embedder();
-    let results = search::hybrid_search(&conn, embedder, "how to build release binary", None, 5).unwrap();
-    assert_relevant_in_top_k(&results, &["cargo", "release", "strip", "lto", "deploy"], "deployment");
+    let results =
+        search::hybrid_search(&conn, embedder, "how to build release binary", None, 5).unwrap();
+    assert_relevant_in_top_k(
+        &results,
+        &["cargo", "release", "strip", "lto", "deploy"],
+        "deployment",
+    );
 }
 
 #[test]
 fn golden_shader() {
     let (_dir, conn) = setup_golden_corpus();
     let embedder = common::shared_embedder();
-    let results = search::hybrid_search(&conn, embedder, "shader compilation pipeline", None, 5).unwrap();
+    let results =
+        search::hybrid_search(&conn, embedder, "shader compilation pipeline", None, 5).unwrap();
     assert_relevant_in_top_k(&results, &["shader", "spir", "compilation"], "shader");
 }
 
@@ -130,15 +185,29 @@ fn golden_wing_scoping() {
     let (_dir, conn) = setup_golden_corpus();
     let embedder = common::shared_embedder();
     // Search within game_engine wing should only return game content
-    let results = search::hybrid_search(&conn, embedder, "technical implementation", Some("game_engine"), 5).unwrap();
-    assert!(results.iter().all(|r| r.wing == "game_engine"),
-        "wing-scoped search should only return that wing's results");
+    let results = search::hybrid_search(
+        &conn,
+        embedder,
+        "technical implementation",
+        Some("game_engine"),
+        5,
+    )
+    .unwrap();
+    assert!(
+        results.iter().all(|r| r.wing == "game_engine"),
+        "wing-scoped search should only return that wing's results"
+    );
 }
 
 #[test]
 fn golden_database_migration() {
     let (_dir, conn) = setup_golden_corpus();
     let embedder = common::shared_embedder();
-    let results = search::hybrid_search(&conn, embedder, "migrating from Python database", None, 5).unwrap();
-    assert_relevant_in_top_k(&results, &["migration", "python", "schema", "drawers"], "migration");
+    let results =
+        search::hybrid_search(&conn, embedder, "migrating from Python database", None, 5).unwrap();
+    assert_relevant_in_top_k(
+        &results,
+        &["migration", "python", "schema", "drawers"],
+        "migration",
+    );
 }

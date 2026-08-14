@@ -1,6 +1,7 @@
 use anyhow::Result;
-use fastembed::{TextEmbedding, InitOptions, EmbeddingModel};
+use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 
+#[cfg(target_os = "windows")]
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Once;
@@ -13,25 +14,41 @@ const ORT_VERSION: &str = "1.20.0";
 /// Platform-specific download URL for ONNX Runtime from Microsoft's GitHub releases.
 fn ort_download_url() -> &'static str {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-    { "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-win-x64-1.20.0.zip" }
+    {
+        "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-win-x64-1.20.0.zip"
+    }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    { "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-linux-x64-1.20.0.tgz" }
+    {
+        "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-linux-x64-1.20.0.tgz"
+    }
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    { "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-osx-x86_64-1.20.0.tgz" }
+    {
+        "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-osx-x86_64-1.20.0.tgz"
+    }
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    { "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-osx-arm64-1.20.0.tgz" }
+    {
+        "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-osx-arm64-1.20.0.tgz"
+    }
     #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-    { "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-linux-aarch64-1.20.0.tgz" }
+    {
+        "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-linux-aarch64-1.20.0.tgz"
+    }
 }
 
 /// Platform-specific library filename.
 fn ort_lib_filename() -> &'static str {
     #[cfg(target_os = "windows")]
-    { "onnxruntime.dll" }
+    {
+        "onnxruntime.dll"
+    }
     #[cfg(target_os = "linux")]
-    { "libonnxruntime.so" }
+    {
+        "libonnxruntime.so"
+    }
     #[cfg(target_os = "macos")]
-    { "libonnxruntime.dylib" }
+    {
+        "libonnxruntime.dylib"
+    }
 }
 
 /// Directory where we cache the ONNX Runtime library.
@@ -55,7 +72,9 @@ static mut ORT_INIT_ERROR: Option<String> = None;
 pub fn ensure_ort_runtime() -> Result<()> {
     ORT_INIT.call_once(|| {
         if let Err(e) = ensure_ort_runtime_inner() {
-            unsafe { ORT_INIT_ERROR = Some(format!("{:#}", e)); }
+            unsafe {
+                ORT_INIT_ERROR = Some(format!("{:#}", e));
+            }
         }
     });
     unsafe {
@@ -81,12 +100,17 @@ fn ensure_ort_runtime_inner() -> Result<()> {
 
 fn download_ort_runtime(target_path: &PathBuf) -> Result<()> {
     let url = ort_download_url();
-    eprintln!("recall: Downloading ONNX Runtime v{} (first run only)...", ORT_VERSION);
+    eprintln!(
+        "recall: Downloading ONNX Runtime v{} (first run only)...",
+        ORT_VERSION
+    );
 
-    let response = ureq::get(url).call()
+    let response = ureq::get(url)
+        .call()
         .map_err(|e| anyhow::anyhow!("Failed to download ONNX Runtime: {}", e))?;
 
-    let len = response.header("Content-Length")
+    let len = response
+        .header("Content-Length")
         .and_then(|v| v.parse::<u64>().ok());
 
     let mut body = Vec::new();
@@ -96,10 +120,16 @@ fn download_ort_runtime(target_path: &PathBuf) -> Result<()> {
         let mut buf = [0u8; 65536];
         loop {
             let n = std::io::Read::read(&mut reader, &mut buf)?;
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             body.extend_from_slice(&buf[..n]);
             downloaded += n as u64;
-            eprint!("\r  {:.1}MB / {:.1}MB", downloaded as f64 / 1_048_576.0, total as f64 / 1_048_576.0);
+            eprint!(
+                "\r  {:.1}MB / {:.1}MB",
+                downloaded as f64 / 1_048_576.0,
+                total as f64 / 1_048_576.0
+            );
         }
         eprintln!();
     } else {
@@ -151,7 +181,7 @@ fn extract_lib_from_zip(data: &[u8], lib_name: &str, target_path: &PathBuf) -> R
     let eocd_search_start = if len > 65557 { len - 65557 } else { 0 };
     let mut eocd_pos = None;
     for i in (eocd_search_start..len.saturating_sub(3)).rev() {
-        if data[i] == 0x50 && data[i+1] == 0x4b && data[i+2] == 0x05 && data[i+3] == 0x06 {
+        if data[i] == 0x50 && data[i + 1] == 0x4b && data[i + 2] == 0x05 && data[i + 3] == 0x06 {
             eocd_pos = Some(i);
             break;
         }
@@ -159,25 +189,35 @@ fn extract_lib_from_zip(data: &[u8], lib_name: &str, target_path: &PathBuf) -> R
     let eocd_pos = eocd_pos.ok_or_else(|| anyhow::anyhow!("Invalid ZIP: no EOCD found"))?;
 
     // Parse EOCD to find central directory offset
-    let cd_offset = u32::from_le_bytes([data[eocd_pos+16], data[eocd_pos+17], data[eocd_pos+18], data[eocd_pos+19]]) as u64;
-    let cd_entries = u16::from_le_bytes([data[eocd_pos+10], data[eocd_pos+11]]) as usize;
+    let cd_offset = u32::from_le_bytes([
+        data[eocd_pos + 16],
+        data[eocd_pos + 17],
+        data[eocd_pos + 18],
+        data[eocd_pos + 19],
+    ]) as u64;
+    let cd_entries = u16::from_le_bytes([data[eocd_pos + 10], data[eocd_pos + 11]]) as usize;
 
     cursor.seek(SeekFrom::Start(cd_offset))?;
 
     for _ in 0..cd_entries {
         let mut sig = [0u8; 4];
         cursor.read_exact(&mut sig)?;
-        if sig != [0x50, 0x4b, 0x01, 0x02] { break; }
+        if sig != [0x50, 0x4b, 0x01, 0x02] {
+            break;
+        }
 
         let mut header = [0u8; 42];
         cursor.read_exact(&mut header)?;
 
-        let compressed_size = u32::from_le_bytes([header[16], header[17], header[18], header[19]]) as u64;
-        let uncompressed_size = u32::from_le_bytes([header[20], header[21], header[22], header[23]]) as u64;
+        let compressed_size =
+            u32::from_le_bytes([header[16], header[17], header[18], header[19]]) as u64;
+        let uncompressed_size =
+            u32::from_le_bytes([header[20], header[21], header[22], header[23]]) as u64;
         let name_len = u16::from_le_bytes([header[24], header[25]]) as usize;
         let extra_len = u16::from_le_bytes([header[26], header[27]]) as usize;
         let comment_len = u16::from_le_bytes([header[28], header[29]]) as usize;
-        let local_header_offset = u32::from_le_bytes([header[38], header[39], header[40], header[41]]) as u64;
+        let local_header_offset =
+            u32::from_le_bytes([header[38], header[39], header[40], header[41]]) as u64;
         let compression = u16::from_le_bytes([header[6], header[7]]);
 
         let mut name_buf = vec![0u8; name_len];
@@ -206,7 +246,8 @@ fn extract_lib_from_zip(data: &[u8], lib_name: &str, target_path: &PathBuf) -> R
                 data[pos..pos + uncompressed_size as usize].to_vec()
             } else if compression == 8 {
                 // Deflate
-                let mut decoder = flate2::read::DeflateDecoder::new(&data[pos..pos + compressed_size as usize]);
+                let mut decoder =
+                    flate2::read::DeflateDecoder::new(&data[pos..pos + compressed_size as usize]);
                 let mut out = Vec::with_capacity(uncompressed_size as usize);
                 decoder.read_to_end(&mut out)?;
                 out
@@ -274,16 +315,17 @@ pub const DEFAULT_MODEL: Model = Model::BgeBase;
 /// Read model selection from RECALL_MODEL env var, falling back to default.
 pub fn configured_model() -> Model {
     match std::env::var("RECALL_MODEL") {
-        Ok(val) => {
-            match Model::from_name(&val) {
-                Some(m) => m,
-                None => {
-                    eprintln!("recall: unknown RECALL_MODEL='{}', valid options: bge-base, bge-small", val);
-                    eprintln!("recall: falling back to default ({})", DEFAULT_MODEL.name());
-                    DEFAULT_MODEL
-                }
+        Ok(val) => match Model::from_name(&val) {
+            Some(m) => m,
+            None => {
+                eprintln!(
+                    "recall: unknown RECALL_MODEL='{}', valid options: bge-base, bge-small",
+                    val
+                );
+                eprintln!("recall: falling back to default ({})", DEFAULT_MODEL.name());
+                DEFAULT_MODEL
             }
-        }
+        },
         Err(_) => DEFAULT_MODEL,
     }
 }
@@ -297,10 +339,22 @@ pub fn check_model_mismatch(conn: &rusqlite::Connection) -> Model {
         if let Some(stored_model) = Model::from_name(&stored) {
             if stored_model != model {
                 eprintln!("recall: ⚠ MODEL MISMATCH");
-                eprintln!("recall:   Database was built with: {} ({}-dim)", stored_model.name(), stored_model.dimensions());
-                eprintln!("recall:   Current config requests: {} ({}-dim)", model.name(), model.dimensions());
-                eprintln!("recall:   Search results will be degraded — embeddings are incompatible.");
-                eprintln!("recall:   To fix: re-ingest all data with the new model, or switch back:");
+                eprintln!(
+                    "recall:   Database was built with: {} ({}-dim)",
+                    stored_model.name(),
+                    stored_model.dimensions()
+                );
+                eprintln!(
+                    "recall:   Current config requests: {} ({}-dim)",
+                    model.name(),
+                    model.dimensions()
+                );
+                eprintln!(
+                    "recall:   Search results will be degraded — embeddings are incompatible."
+                );
+                eprintln!(
+                    "recall:   To fix: re-ingest all data with the new model, or switch back:"
+                );
                 eprintln!("recall:     RECALL_MODEL={}", stored_model.name());
                 eprintln!();
             }
@@ -319,7 +373,9 @@ fn model_cache_dir() -> std::path::PathBuf {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_else(|_| ".".to_string());
-    std::path::PathBuf::from(home).join(".recall").join("models")
+    std::path::PathBuf::from(home)
+        .join(".recall")
+        .join("models")
 }
 
 /// Embedding model wrapper — loads once, reuses for batch operations.
@@ -342,7 +398,7 @@ impl Embedder {
         let model = TextEmbedding::try_new(
             InitOptions::new(which.fastembed_model())
                 .with_cache_dir(cache_dir)
-                .with_show_download_progress(true)
+                .with_show_download_progress(true),
         )?;
         Ok(Embedder { model, which })
     }
@@ -369,7 +425,6 @@ impl Embedder {
         Ok(results)
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -410,7 +465,13 @@ mod tests {
 
     #[test]
     fn model_name_roundtrip() {
-        assert_eq!(Model::from_name(Model::BgeBase.name()), Some(Model::BgeBase));
-        assert_eq!(Model::from_name(Model::BgeSmall.name()), Some(Model::BgeSmall));
+        assert_eq!(
+            Model::from_name(Model::BgeBase.name()),
+            Some(Model::BgeBase)
+        );
+        assert_eq!(
+            Model::from_name(Model::BgeSmall.name()),
+            Some(Model::BgeSmall)
+        );
     }
 }

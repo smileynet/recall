@@ -7,26 +7,80 @@ use recall::embed::{Embedder, Model};
 
 const QUERIES: &[(&str, &str)] = &[
     // (query, expected_keywords_in_good_results)
-    ("what did we decide about authentication", "auth,jwt,token,login,session"),
-    ("why did we choose Rust over Go", "rust,go,fastembed,cgo,performance"),
-    ("which embedding model should we use", "bge,embedding,model,dimension,fastembed"),
-    ("how does the scan cache work", "scan,cache,mtime,size,hash,stat"),
-    ("database schema design", "schema,table,column,migration,sqlite"),
-    ("how are sessions chunked into messages", "chunk,message,session,role,user,assistant"),
-    ("fastembed model loading performance", "fastembed,model,load,cold,onnx"),
-    ("SQLite WAL mode crash safety", "wal,sqlite,crash,journal,lock"),
-    ("FTS5 BM25 search implementation", "fts5,bm25,search,rank,match"),
-    ("that thing about parallel file scanning", "scan,parallel,jwalk,file,walk"),
+    (
+        "what did we decide about authentication",
+        "auth,jwt,token,login,session",
+    ),
+    (
+        "why did we choose Rust over Go",
+        "rust,go,fastembed,cgo,performance",
+    ),
+    (
+        "which embedding model should we use",
+        "bge,embedding,model,dimension,fastembed",
+    ),
+    (
+        "how does the scan cache work",
+        "scan,cache,mtime,size,hash,stat",
+    ),
+    (
+        "database schema design",
+        "schema,table,column,migration,sqlite",
+    ),
+    (
+        "how are sessions chunked into messages",
+        "chunk,message,session,role,user,assistant",
+    ),
+    (
+        "fastembed model loading performance",
+        "fastembed,model,load,cold,onnx",
+    ),
+    (
+        "SQLite WAL mode crash safety",
+        "wal,sqlite,crash,journal,lock",
+    ),
+    (
+        "FTS5 BM25 search implementation",
+        "fts5,bm25,search,rank,match",
+    ),
+    (
+        "that thing about parallel file scanning",
+        "scan,parallel,jwalk,file,walk",
+    ),
     ("something about JWT tokens", "jwt,token,auth,refresh,expir"),
-    ("the refactoring we discussed last week", "refactor,module,extract,simplif"),
-    ("deployment pipeline configuration", "deploy,pipeline,ci,build,release"),
-    ("error handling patterns", "error,result,anyhow,handle,unwrap"),
-    ("test fixtures and integration testing", "test,fixture,integration,assert"),
-    ("shader compilation optimization", "shader,compile,optim,gpu,glsl"),
+    (
+        "the refactoring we discussed last week",
+        "refactor,module,extract,simplif",
+    ),
+    (
+        "deployment pipeline configuration",
+        "deploy,pipeline,ci,build,release",
+    ),
+    (
+        "error handling patterns",
+        "error,result,anyhow,handle,unwrap",
+    ),
+    (
+        "test fixtures and integration testing",
+        "test,fixture,integration,assert",
+    ),
+    (
+        "shader compilation optimization",
+        "shader,compile,optim,gpu,glsl",
+    ),
     ("game save file format", "save,file,format,serial,load"),
-    ("UI component state management", "state,component,ui,render,update"),
-    ("project planning and ticket breakdown", "plan,ticket,spec,milestone,task"),
-    ("code review feedback from last session", "review,feedback,change,suggest"),
+    (
+        "UI component state management",
+        "state,component,ui,render,update",
+    ),
+    (
+        "project planning and ticket breakdown",
+        "plan,ticket,spec,milestone,task",
+    ),
+    (
+        "code review feedback from last session",
+        "review,feedback,change,suggest",
+    ),
 ];
 
 fn main() {
@@ -51,12 +105,20 @@ fn main() {
     println!("\nEmbedding {} chunks with bge-base...", chunks.len());
     let t = Instant::now();
     let base_embeddings = embed_all(&base_embedder, &chunks);
-    println!("  Done: {:?} ({:.0} chunks/sec)", t.elapsed(), chunks.len() as f64 / t.elapsed().as_secs_f64());
+    println!(
+        "  Done: {:?} ({:.0} chunks/sec)",
+        t.elapsed(),
+        chunks.len() as f64 / t.elapsed().as_secs_f64()
+    );
 
     println!("Embedding {} chunks with bge-small...", chunks.len());
     let t = Instant::now();
     let small_embeddings = embed_all(&small_embedder, &chunks);
-    println!("  Done: {:?} ({:.0} chunks/sec)", t.elapsed(), chunks.len() as f64 / t.elapsed().as_secs_f64());
+    println!(
+        "  Done: {:?} ({:.0} chunks/sec)",
+        t.elapsed(),
+        chunks.len() as f64 / t.elapsed().as_secs_f64()
+    );
 
     // Run queries against both
     println!("\n=== Query Results Comparison ===\n");
@@ -96,8 +158,14 @@ fn main() {
             "  TIE  "
         };
 
-        println!("[{:2}] {:50} base={:.2} small={:.2} {}",
-            i + 1, query, base_score, small_score, winner);
+        println!(
+            "[{:2}] {:50} base={:.2} small={:.2} {}",
+            i + 1,
+            query,
+            base_score,
+            small_score,
+            winner
+        );
     }
 
     // Print detailed results for a few interesting queries
@@ -116,30 +184,66 @@ fn main() {
         println!("  --- bge-base top-3 ---");
         for (rank, (idx, sim)) in base_top3.iter().enumerate() {
             let preview: String = chunks[*idx].content.chars().take(100).collect();
-            let has_kw = kw_list.iter().any(|kw| chunks[*idx].content.to_lowercase().contains(kw));
-            println!("    [{}] sim={:.3} {} | {}", rank + 1, sim, if has_kw { "✓" } else { "✗" }, preview.replace('\n', " "));
+            let has_kw = kw_list
+                .iter()
+                .any(|kw| chunks[*idx].content.to_lowercase().contains(kw));
+            println!(
+                "    [{}] sim={:.3} {} | {}",
+                rank + 1,
+                sim,
+                if has_kw { "✓" } else { "✗" },
+                preview.replace('\n', " ")
+            );
         }
         println!("  --- bge-small top-3 ---");
         for (rank, (idx, sim)) in small_top3.iter().enumerate() {
             let preview: String = chunks[*idx].content.chars().take(100).collect();
-            let has_kw = kw_list.iter().any(|kw| chunks[*idx].content.to_lowercase().contains(kw));
-            println!("    [{}] sim={:.3} {} | {}", rank + 1, sim, if has_kw { "✓" } else { "✗" }, preview.replace('\n', " "));
+            let has_kw = kw_list
+                .iter()
+                .any(|kw| chunks[*idx].content.to_lowercase().contains(kw));
+            println!(
+                "    [{}] sim={:.3} {} | {}",
+                rank + 1,
+                sim,
+                if has_kw { "✓" } else { "✗" },
+                preview.replace('\n', " ")
+            );
         }
         println!();
     }
 
     // Summary
     println!("=== Summary ===");
-    println!("  bge-base total relevance score:  {:.1}/{}", base_relevance_total, QUERIES.len());
-    println!("  bge-small total relevance score: {:.1}/{}", small_relevance_total, QUERIES.len());
-    println!("  bge-base wins: {}, bge-small wins: {}, ties: {}", base_wins, small_wins, ties);
+    println!(
+        "  bge-base total relevance score:  {:.1}/{}",
+        base_relevance_total,
+        QUERIES.len()
+    );
+    println!(
+        "  bge-small total relevance score: {:.1}/{}",
+        small_relevance_total,
+        QUERIES.len()
+    );
+    println!(
+        "  bge-base wins: {}, bge-small wins: {}, ties: {}",
+        base_wins, small_wins, ties
+    );
     let base_avg = base_relevance_total / QUERIES.len() as f64;
     let small_avg = small_relevance_total / QUERIES.len() as f64;
-    println!("  Average relevance: base={:.3}, small={:.3}", base_avg, small_avg);
+    println!(
+        "  Average relevance: base={:.3}, small={:.3}",
+        base_avg, small_avg
+    );
     if base_avg > small_avg {
-        println!("  → bge-base produces {:.1}% more relevant results", (base_avg - small_avg) / small_avg * 100.0);
+        println!(
+            "  → bge-base produces {:.1}% more relevant results",
+            (base_avg - small_avg) / small_avg * 100.0
+        );
     } else if small_avg > base_avg {
-        println!("  → bge-small produces {:.1}% more relevant results", (small_avg - base_avg) / base_avg * 100.0);
+        println!(
+            "  → bge-small produces {:.1}% more relevant results",
+            (small_avg - base_avg) / base_avg * 100.0
+        );
     } else {
         println!("  → Models produce equivalent quality results");
     }
@@ -154,7 +258,8 @@ struct Chunk {
 fn load_sample_chunks(path: &str) -> Vec<Chunk> {
     let file = std::fs::File::open(path).unwrap();
     let reader = std::io::BufReader::new(file);
-    reader.lines()
+    reader
+        .lines()
         .filter_map(|line| {
             let line = line.ok()?;
             let v: serde_json::Value = serde_json::from_str(&line).ok()?;
@@ -178,7 +283,8 @@ fn embed_all(embedder: &Embedder, chunks: &[Chunk]) -> Vec<Vec<f32>> {
 }
 
 fn find_top_k(query_emb: &[f32], embeddings: &[Vec<f32>], k: usize) -> Vec<(usize, f64)> {
-    let mut scores: Vec<(usize, f64)> = embeddings.iter()
+    let mut scores: Vec<(usize, f64)> = embeddings
+        .iter()
         .enumerate()
         .map(|(i, emb)| (i, cosine_sim(query_emb, emb)))
         .collect();
@@ -188,10 +294,18 @@ fn find_top_k(query_emb: &[f32], embeddings: &[Vec<f32>], k: usize) -> Vec<(usiz
 }
 
 fn cosine_sim(a: &[f32], b: &[f32]) -> f64 {
-    let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| (*x as f64) * (*y as f64)).sum();
+    let dot: f64 = a
+        .iter()
+        .zip(b.iter())
+        .map(|(x, y)| (*x as f64) * (*y as f64))
+        .sum();
     let norm_a: f64 = a.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
     let norm_b: f64 = b.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
-    if norm_a == 0.0 || norm_b == 0.0 { 0.0 } else { dot / (norm_a * norm_b) }
+    if norm_a == 0.0 || norm_b == 0.0 {
+        0.0
+    } else {
+        dot / (norm_a * norm_b)
+    }
 }
 
 fn score_relevance(top_k: &[(usize, f64)], chunks: &[Chunk], keywords: &[&str]) -> f64 {
