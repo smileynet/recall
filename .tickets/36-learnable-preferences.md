@@ -1,7 +1,7 @@
 ---
 id: "36"
 title: "Explore learnable preferences — feedback-driven memory with scoping and decay"
-status: open
+status: done
 blocked_by: []
 ---
 
@@ -82,3 +82,12 @@ CodeRabbit tracks usage server-side. For recall:
 - Greptile memory (thumbs up/down): https://www.greptile.com/docs/code-review/key-features
 - crew-research guidance-sync skill (the extraction-side analog)
 - crew-research research: `.scratch/research/coderabbit.md`, `.scratch/research/greptile.md`
+
+## Resolution (2026-08-14)
+
+Decomposed into 5 focused tickets:
+- 043: Design doc
+- 044: Schema migration
+- 045: Search boosting
+- 046: Decay + health reporting
+- 047: Golden query validation

@@ -2,7 +2,7 @@
 id: "39"
 title: "Adopt versioning, changelog, release, and crates workflows from tkt"
 status: open
-blocked_by: ["19", "34", "35", "36", "37", "38"]
+blocked_by: ["037", "038", "046", "047"]
 priority: low
 ---
 
