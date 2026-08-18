@@ -395,6 +395,9 @@ impl Embedder {
     pub fn with_model(which: Model) -> Result<Self> {
         ensure_ort_runtime()?;
         let cache_dir = model_cache_dir();
+        // Override HF_HOME so hf-hub downloads to our controlled cache dir,
+        // not a stale/nonexistent path from the user's environment.
+        std::env::set_var("HF_HOME", &cache_dir);
         let model = TextEmbedding::try_new(
             InitOptions::new(which.fastembed_model())
                 .with_cache_dir(cache_dir)
