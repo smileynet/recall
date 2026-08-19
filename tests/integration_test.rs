@@ -303,3 +303,33 @@ fn test_scan_cache_hit_miss() {
         "should detect modified file (cache miss after change)"
     );
 }
+
+// =============================================================================
+// Test: embed_batch sub-batching (regression for large-file OOM)
+// =============================================================================
+
+/// A single large session file can produce far more chunks than the internal
+/// sub-batch size. embed_batch must sub-batch internally and still return exactly
+/// one embedding per input, in order, at the correct dimension. Regression for the
+/// unbounded-batch OOM (a 44MB session → ~55k chunks → >20GB RSS) fixed by chunking
+/// the input inside embed_batch.
+#[test]
+fn test_embed_batch_exceeds_sub_batch() {
+    let embedder = embed::Embedder::new().expect("embedder init");
+    // 600 > the 256 internal SUB_BATCH → forces multiple sub-batches.
+    let owned: Vec<String> = (0..600).map(|i| format!("chunk number {i} about recall")).collect();
+    let texts: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+
+    let embeddings = embedder.embed_batch(&texts).expect("embed_batch");
+
+    assert_eq!(embeddings.len(), texts.len(), "one embedding per input text");
+    let dim = embedder.dimensions();
+    assert!(embeddings.iter().all(|e| e.len() == dim), "all embeddings have model dimension {dim}");
+
+    // Sub-batching must not change results: a value embedded standalone matches its
+    // position in the batch (same model, no dynamic quantization).
+    let solo = embedder.embed_one(texts[300]).expect("embed_one");
+    let batched = &embeddings[300];
+    let close = solo.iter().zip(batched).all(|(a, b)| (a - b).abs() < 1e-4);
+    assert!(close, "sub-batched embedding matches standalone embedding");
+}

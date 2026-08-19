@@ -423,9 +423,23 @@ impl Embedder {
     }
 
     /// Embed a batch of texts.
+    ///
+    /// Processes in bounded sub-batches so peak memory stays flat regardless of
+    /// input size. A single large session file can produce tens of thousands of
+    /// chunks; passing them all to `model.embed` at once made fastembed fan the
+    /// work across every core via `par_chunks` + `from_par_iter`, allocating ONNX
+    /// tensors for the whole set simultaneously and OOM-killing ingest on large
+    /// files (observed: a 44MB session → ~55k chunks → >20GB RSS). Sub-batching
+    /// caps the working set; results are identical (BGE-base is not dynamically
+    /// quantized, so a fixed batch size is safe).
     pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-        let results = self.model.embed(texts.to_vec(), None)?;
-        Ok(results)
+        const SUB_BATCH: usize = 256;
+        let mut out = Vec::with_capacity(texts.len());
+        for window in texts.chunks(SUB_BATCH) {
+            let batch = self.model.embed(window.to_vec(), Some(SUB_BATCH))?;
+            out.extend(batch);
+        }
+        Ok(out)
     }
 }
 
