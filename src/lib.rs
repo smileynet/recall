@@ -1,4 +1,5 @@
 pub mod embed;
+pub mod guard;
 pub mod ingest;
 pub mod logging;
 pub mod migrate;

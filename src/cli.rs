@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use recall::{embed, ingest, logging, migrate, recall_log, search, store, telemetry, update};
+use recall::{embed, guard, ingest, logging, migrate, recall_log, search, store, telemetry, update};
 
 #[derive(Parser)]
 #[command(
@@ -249,14 +249,43 @@ fn cmd_add(content: &str, wing: &str, room: &str, dtype: &str) -> Result<i32> {
 }
 
 fn cmd_ingest(path: Option<&str>) -> Result<i32> {
+    // Acquire exclusive process lock
+    let _guard = match guard::ProcessGuard::try_acquire()? {
+        Some(g) => g,
+        None => {
+            recall_log!("ingest: another recall instance is running, exiting");
+            eprintln!("recall: another instance is already running, skipping");
+            return Ok(0);
+        }
+    };
+    guard::install_timeout();
     ingest::run_ingest(path)
 }
 
 fn cmd_import(path: &str, wing: &str, force: bool) -> Result<i32> {
+    // Acquire exclusive process lock
+    let _guard = match guard::ProcessGuard::try_acquire()? {
+        Some(g) => g,
+        None => {
+            eprintln!("recall: another instance is already running, skipping");
+            return Ok(0);
+        }
+    };
+    guard::install_timeout();
     ingest::import_directory(path, wing, force)
 }
 
 fn cmd_import_all(force: bool) -> Result<i32> {
+    // Acquire exclusive process lock
+    let _guard = match guard::ProcessGuard::try_acquire()? {
+        Some(g) => g,
+        None => {
+            eprintln!("recall: another instance is already running, skipping");
+            return Ok(0);
+        }
+    };
+    guard::install_timeout();
+
     let mut roots = Vec::new();
     if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
         let home_code = std::path::PathBuf::from(&home).join("code");
@@ -301,9 +330,19 @@ fn cmd_import_all(force: bool) -> Result<i32> {
 }
 
 fn cmd_sync(force: bool, skip_import: bool, skip_ingest: bool) -> Result<i32> {
-    // Note: ingest acquires its own exclusive lock (recall.lock) but import relies on
-    // SQLite WAL for write safety. Concurrent sync is prevented by Windows Task Scheduler
-    // single-instance policy. If manual overlap occurs, WAL ensures correctness.
+    // Acquire exclusive process lock — only one sync/ingest/import at a time
+    let _guard = match guard::ProcessGuard::try_acquire()? {
+        Some(g) => g,
+        None => {
+            recall_log!("sync: another recall instance is running, exiting");
+            eprintln!("recall: another instance is already running, skipping");
+            return Ok(0);
+        }
+    };
+
+    // Install hard timeout to prevent runaway processes
+    guard::install_timeout();
+
     recall_log!("sync: starting");
 
     // Load embedder once for both operations
