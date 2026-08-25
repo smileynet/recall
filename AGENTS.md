@@ -77,9 +77,22 @@ recall --version                                   # version info
 ## Deployment
 
 - Binary: `~/.cargo/bin/recall.exe` (v0.1.0)
-- Scheduled task: `RecallIngest` (every 6 hours, direct binary)
-- Corpus: ~26K chunks, 56 wings, 38/38 project coverage
+- Scheduled task: `RecallIngest` (every 30 min, direct binary)
+- Corpus: ~44K chunks, 69 wings, 47/47 project coverage
 - Model: BGE-base-en-v1.5 (~416MB cached ONNX)
+- ONNX Runtime: load-dynamic (`~/.recall/lib/onnxruntime.dll`)
+
+### Updating
+
+```bash
+./scripts/deploy-local.ps1              # Windows (PowerShell)
+./scripts/deploy-local.sh               # macOS/Linux
+./scripts/deploy-local.ps1 -SkipTests   # skip unit tests (already passed)
+```
+
+Scripts do: test → build (--locked) → backup → copy → verify → health check → report scheduled task status. Rolls back automatically if verification fails.
+
+Note: `cargo install --path .` is broken (ticket #049, ort dependency). Use the deploy scripts instead.
 
 ## Performance (measured on production corpus)
 
