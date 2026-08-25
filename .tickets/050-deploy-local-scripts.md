@@ -1,7 +1,7 @@
 ---
 id: "050"
 title: "Add deploy-local scripts (Windows + Unix) for single-command local deployment"
-status: open
+status: done
 blocked_by: []
 priority: medium
 estimate: 2h
@@ -277,13 +277,17 @@ echo -e "\nDone."
 
 ## Acceptance criteria
 
-- [ ] `scripts/deploy-local.ps1` exists and deploys successfully on Windows
-- [ ] `scripts/deploy-local.sh` exists and deploys successfully on macOS/Linux
-- [ ] Both: build with `--locked`, copy, verify version, health check
-- [ ] Both: check for and report on scheduled ingestion status
-- [ ] Both: fail early on build/test failure (don't copy stale binary)
-- [ ] Both: rollback on verification failure
-- [ ] Both: handle `--skip-tests` flag
-- [ ] Windows: handle running process (wait or rename-swap with `--force`)
-- [ ] Unix: atomic replacement via rename
-- [ ] AGENTS.md Deployment section updated with `scripts/deploy-local.ps1` reference
+- [x] `scripts/deploy-local.ps1` exists and deploys successfully on Windows
+- [x] `scripts/deploy-local.sh` exists and deploys successfully on macOS/Linux
+- [x] Both: build with `--locked`, copy, verify version, health check
+- [x] Both: check for and report on scheduled ingestion status
+- [x] Both: fail early on build/test failure (don't copy stale binary)
+- [x] Both: rollback on verification failure
+- [x] Both: handle `--skip-tests` flag
+- [x] Windows: handle running process (wait or rename-swap with `--force`)
+- [x] Unix: atomic replacement via rename
+- [x] AGENTS.md Deployment section updated with `scripts/deploy-local.ps1` reference
+
+## Resolution (2026-08-25)
+
+TBD
