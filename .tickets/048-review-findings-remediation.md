@@ -1,7 +1,7 @@
 ---
 id: "048"
 title: "Review remediation - validated fixes from full code review"
-status: open
+status: in_progress
 blocked_by: []
 priority: high
 estimate: 4h
