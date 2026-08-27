@@ -1,7 +1,7 @@
 ---
 id: "048"
 title: "Review remediation - validated fixes from full code review"
-status: in_progress
+status: done
 blocked_by: []
 priority: high
 estimate: 4h
@@ -247,7 +247,50 @@ transaction — no double-wrapping.
 
 ## Acceptance criteria
 
-- [ ] P1–P5 implemented with tests passing (`cargo test`)
-- [ ] `cargo clippy` clean, `cargo fmt` applied
-- [ ] No behavior change to documented CLI output contracts (`cli_contract.rs`, snapshots)
-- [ ] Deferred items above either have their own tickets or explicit notes in this one
+- [x] P1–P5 implemented with tests passing (`cargo test`)
+- [x] `cargo clippy` clean, `cargo fmt` applied
+- [x] No behavior change to documented CLI output contracts (`cli_contract.rs`, snapshots)
+- [x] Deferred items above either have their own tickets or explicit notes in this one
+
+## Validation criteria
+
+- `cargo test` → all suites pass (76 unit + integration/contract/snapshot)
+- `cargo clippy --lib` → no warnings
+- `cargo fmt --check` → no diff
+- `cargo test --test cli_contract --test cli_snapshot` → pass (output contracts unchanged)
+- Deployed binary exercises the new paths: `recall add` (insert_chunk_atomic),
+  `recall migrate --help` shows `--force`
+
+## Validation evidence (2026-08-27)
+
+- `cargo test`: `76 passed; 0 failed` (lib) + 6/10/3/10/5/4 across integration
+  binaries, all `test result: ok`. One flaky cross-binary `RECALL_DB` env race
+  (`test_ingest_from_fixtures`) confirmed pre-existing — passes in isolation and
+  on re-run; not caused by these changes.
+- `cargo clippy --lib`: clean after fixing the one pre-existing `manual arithmetic
+  check` warning (embed.rs zip parser → `saturating_sub`).
+- `cargo fmt --check`: no output (clean).
+- `cargo test --test cli_contract --test cli_snapshot`: `6 passed` + `3 passed`.
+- Deploy: `deploy-local.ps1 --SkipTests` → `Installed: recall 0.1.0`, health 26,816
+  chunks, scheduled task Ready (last result 0). `recall add` + `recall search`
+  roundtrip works; `recall migrate --help` shows the new `--force` flag.
+
+### Notes on scope adjustments during implementation
+
+- P1: instead of only raising the default, also added a workload-scaled variant
+  (`install_timeout_scaled`) used by `cmd_ingest` via `count_session_files`.
+  Removed the now-redundant internal `recall.lock` in `run_ingest` (ProcessGuard
+  supersedes it).
+- P5: adding the guard to `cmd_import` exposed a latent bug — Windows lock
+  contention returns os error 32/33, not `WouldBlock`, so `try_acquire` errored
+  instead of returning `Ok(None)`. Fixed via `is_lock_contended`. Also made the
+  lock path DB-relative (per-corpus) which is more correct and fixes test
+  isolation under `RECALL_DB`.
+- SHA-256 pinning for the ORT archive (P4) deferred: upstream ORT releases don't
+  publish per-asset SHA-256 sidecars we can pin against without vendoring hashes
+  per version; the size-validation + atomic-persist guard covers the truncation
+  failure mode. Tracked as a deferred item.
+
+## Resolution (2026-08-27)
+
+Implemented P1-P5: 90min+scaled timeouts & migrate guard, import manifest inside txn, migrate idempotence guard + --force + embedding validation, atomic ORT download + Windows update rollback, transaction-wrapped delete helpers + insert_chunk_atomic. Also fixed Windows lock-contention handling and made lock path DB-relative.
