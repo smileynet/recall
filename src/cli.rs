@@ -1,7 +1,9 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use recall::{embed, guard, ingest, logging, migrate, recall_log, search, store, telemetry, update};
+use recall::{
+    embed, guard, ingest, logging, migrate, recall_log, search, store, telemetry, update,
+};
 
 #[derive(Parser)]
 #[command(
@@ -83,6 +85,9 @@ enum Commands {
         /// Re-embed all content immediately (slower but ready to search)
         #[arg(long)]
         embed: bool,
+        /// Re-migrate even if this source was already migrated (clears prior data first)
+        #[arg(long)]
+        force: bool,
     },
     /// Manage local telemetry and crash reporting
     Telemetry {
@@ -122,6 +127,10 @@ enum TelemetryAction {
 pub fn run() -> i32 {
     let start = std::time::Instant::now();
 
+    // Clean up a leftover .old binary from a previous Windows self-update
+    // (the lock is released now that the old process has exited).
+    update::cleanup_old_binary();
+
     // First-run: prompt for telemetry opt-in if no config exists
     telemetry::first_run_prompt();
 
@@ -150,7 +159,7 @@ pub fn run() -> i32 {
         Commands::Status => cmd_status(),
         Commands::Health { json } => cmd_health(json),
         Commands::Forget { wing, older_than } => cmd_forget(&wing, older_than.as_deref()),
-        Commands::Migrate { from, embed } => cmd_migrate(&from, embed),
+        Commands::Migrate { from, embed, force } => cmd_migrate(&from, embed, force),
         Commands::Telemetry { action } => match action {
             TelemetryAction::Status => telemetry::cmd_telemetry_status(),
             TelemetryAction::Enable => telemetry::cmd_telemetry_enable(),
@@ -240,7 +249,7 @@ fn cmd_add(content: &str, wing: &str, room: &str, dtype: &str) -> Result<i32> {
     embed::check_model_mismatch(&db);
     let embedder = embed::Embedder::new()?;
     let embedding = embedder.embed_one(content)?;
-    store::insert_chunk(&db, content, wing, room, dtype, "agent", &embedding)?;
+    store::insert_chunk_atomic(&db, content, wing, room, dtype, "agent", &embedding)?;
     // Record model on first write
     store::set_meta(&db, "embedding_model", embedder.model().name())?;
     store::set_meta(&db, "embedding_dim", &embedder.dimensions().to_string())?;
@@ -258,7 +267,9 @@ fn cmd_ingest(path: Option<&str>) -> Result<i32> {
             return Ok(0);
         }
     };
-    guard::install_timeout();
+    // Scale the timeout to the session-file count (worst case: all files change).
+    let file_count = ingest::count_session_files(path);
+    guard::install_timeout_scaled(file_count);
     ingest::run_ingest(path)
 }
 
@@ -745,7 +756,17 @@ fn parse_duration(s: &str) -> Option<i64> {
     }
 }
 
-fn cmd_migrate(from: &str, batch_embed: bool) -> Result<i32> {
-    migrate::run_migrate(from, batch_embed)?;
+fn cmd_migrate(from: &str, batch_embed: bool, force: bool) -> Result<i32> {
+    // Migration is a bulk write (optionally re-embedding the whole corpus).
+    // Acquire the process lock so it can't race a concurrent ingest/sync.
+    let _guard = match guard::ProcessGuard::try_acquire()? {
+        Some(g) => g,
+        None => {
+            eprintln!("recall: another instance is already running, skipping");
+            return Ok(0);
+        }
+    };
+    guard::install_timeout();
+    migrate::run_migrate(from, batch_embed, force)?;
     Ok(0)
 }

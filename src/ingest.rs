@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use fs2::FileExt;
 use serde_json::Value;
 
 use crate::{embed, recall_log, scan, store};
@@ -116,6 +115,15 @@ pub fn run_ingest(path: Option<&str>) -> Result<i32> {
     run_ingest_with_embedder_lazy(path, None)
 }
 
+/// Count session files under the ingest dir (top-level entries), for scaling the
+/// execution timeout. Best-effort: returns 0 if the dir is missing/unreadable.
+pub fn count_session_files(path: Option<&str>) -> usize {
+    let dir = path.map(PathBuf::from).unwrap_or_else(default_sessions_dir);
+    std::fs::read_dir(&dir)
+        .map(|entries| entries.flatten().filter(|e| e.path().is_file()).count())
+        .unwrap_or(0)
+}
+
 /// Run ingestion with a pre-loaded embedder (for shared-embedder use in sync).
 pub fn run_ingest_with_embedder(path: Option<&str>, embedder: &embed::Embedder) -> Result<i32> {
     run_ingest_with_embedder_lazy(path, Some(embedder))
@@ -128,18 +136,6 @@ fn run_ingest_with_embedder_lazy(
     let dir = path.map(PathBuf::from).unwrap_or_else(default_sessions_dir);
     if !dir.is_dir() {
         anyhow::bail!("session directory not found: {}", dir.display());
-    }
-
-    // Acquire exclusive lock (prevents concurrent ingestion)
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_else(|_| ".".to_string());
-    let lock_path = PathBuf::from(&home).join(".recall").join("recall.lock");
-    std::fs::create_dir_all(lock_path.parent().unwrap())?;
-    let lock_file = std::fs::File::create(&lock_path)?;
-    if lock_file.try_lock_exclusive().is_err() {
-        recall_log!("recall: another ingestion is running, skipping");
-        return Ok(0);
     }
 
     let conn = store::open_db()?;
@@ -265,11 +261,13 @@ pub fn import_directory_with_embedder(
 
     // --force: delete all existing import chunks and manifest entries for this wing
     if force {
-        let deleted = store::delete_chunks_by_source_prefix(&conn, &format!("import:{}:", wing))?;
+        let tx = conn.unchecked_transaction()?;
+        let deleted = store::delete_chunks_by_source_prefix(&tx, &format!("import:{}:", wing))?;
         // Clear manifest
-        for src in store::get_import_sources_for_wing(&conn, wing)? {
-            store::delete_import_source(&conn, &src, wing)?;
+        for src in store::get_import_sources_for_wing(&tx, wing)? {
+            store::delete_import_source(&tx, &src, wing)?;
         }
+        tx.commit()?;
         if deleted > 0 {
             recall_log!(
                 "  Force: deleted {} existing import chunks for wing '{}'",
@@ -295,13 +293,17 @@ pub fn import_directory_with_embedder(
     // Phase 1: Detect deleted files (in manifest but no longer on disk)
     let existing_sources = store::get_import_sources_for_wing(&conn, wing)?;
     let mut files_deleted = 0;
-    for src_path in &existing_sources {
-        if !current_rel_paths.contains(src_path.as_str()) {
-            let source_key = format!("import:{}:{}", wing, src_path);
-            store::delete_chunks_by_source(&conn, &source_key)?;
-            store::delete_import_source(&conn, src_path, wing)?;
-            files_deleted += 1;
+    if !existing_sources.is_empty() {
+        let tx = conn.unchecked_transaction()?;
+        for src_path in &existing_sources {
+            if !current_rel_paths.contains(src_path.as_str()) {
+                let source_key = format!("import:{}:{}", wing, src_path);
+                store::delete_chunks_by_source(&tx, &source_key)?;
+                store::delete_import_source(&tx, src_path, wing)?;
+                files_deleted += 1;
+            }
         }
+        tx.commit()?;
     }
 
     // Phase 2: Hash-gate import for new and changed files
@@ -350,11 +352,13 @@ pub fn import_directory_with_embedder(
         // Chunk
         let chunks = chunk_markdown(&content);
         if chunks.is_empty() {
-            // Still delete old chunks if this was an update (file became empty)
+            // File became empty — delete old chunks and update manifest atomically.
+            let tx = conn.unchecked_transaction()?;
             if is_update {
-                store::delete_chunks_by_source(&conn, &source_key)?;
+                store::delete_chunks_by_source(&tx, &source_key)?;
             }
-            store::upsert_import_source(&conn, &rel_path, wing, &content_hash, file_size, 0)?;
+            store::upsert_import_source(&tx, &rel_path, wing, &content_hash, file_size, 0)?;
+            tx.commit()?;
             continue;
         }
 
@@ -379,9 +383,8 @@ pub fn import_directory_with_embedder(
         for (chunk, embedding) in chunks.iter().zip(embeddings.iter()) {
             store::insert_chunk(&conn, chunk, wing, &room, &dtype, &source_key, embedding)?;
         }
-        conn.execute("COMMIT", [])?;
-
-        // Update manifest
+        // Update manifest INSIDE the transaction so a crash can't leave chunks
+        // persisted with a stale hash (which would re-import identical content).
         store::upsert_import_source(
             &conn,
             &rel_path,
@@ -390,6 +393,8 @@ pub fn import_directory_with_embedder(
             file_size,
             chunks.len() as i64,
         )?;
+        conn.execute("COMMIT", [])?;
+
         total_chunks += chunks.len();
     }
 

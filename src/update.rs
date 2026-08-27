@@ -237,9 +237,24 @@ fn find_asset_url(version: &str) -> Result<String> {
         .and_then(|a| a.as_array())
         .ok_or_else(|| anyhow::anyhow!("no assets in release"))?;
 
-    for asset in assets {
-        if let Some(name) = asset.get("name").and_then(|n| n.as_str()) {
-            if name.contains(&target) {
+    let names: Vec<&str> = assets
+        .iter()
+        .filter_map(|a| a.get("name").and_then(|n| n.as_str()))
+        .collect();
+
+    // Prefer the most specific match: the full target triple (with ABI, e.g.
+    // x86_64-pc-windows-msvc) beats the OS-only substring. This disambiguates
+    // gnu vs musl vs msvc when a release ships multiple variants.
+    let full_triple = full_target_triple();
+    let pick = names
+        .iter()
+        .find(|n| n.contains(&full_triple))
+        .or_else(|| names.iter().find(|n| n.contains(&target)))
+        .copied();
+
+    if let Some(name) = pick {
+        for asset in assets {
+            if asset.get("name").and_then(|n| n.as_str()) == Some(name) {
                 if let Some(url) = asset.get("browser_download_url").and_then(|u| u.as_str()) {
                     return Ok(url.to_string());
                 }
@@ -248,6 +263,19 @@ fn find_asset_url(version: &str) -> Result<String> {
     }
 
     anyhow::bail!("no asset found for platform '{}'", target)
+}
+
+/// Full Rust target triple including ABI (e.g. `x86_64-pc-windows-msvc`).
+/// Used for exact asset disambiguation before falling back to the OS-only match.
+fn full_target_triple() -> String {
+    let arch = std::env::consts::ARCH;
+    match std::env::consts::OS {
+        "windows" => format!("{}-pc-windows-msvc", arch),
+        "macos" => format!("{}-apple-darwin", arch),
+        // Default Linux ABI is gnu; musl builds carry an explicit -musl in the name.
+        "linux" => format!("{}-unknown-linux-gnu", arch),
+        other => format!("{}-{}", arch, other),
+    }
 }
 
 /// Determine the platform target string used in release asset names.
@@ -317,12 +345,20 @@ fn replace_self(new_binary: &[u8]) -> Result<()> {
     let current_exe = std::env::current_exe().context("failed to determine current exe path")?;
 
     if cfg!(windows) {
-        // Windows: can't overwrite a running exe. Rename old, write new, delete old on next run.
+        // Windows can't overwrite a running exe, but CAN rename it aside.
+        // Rename current → .old, write new in its place. If the write fails,
+        // restore .old so the user is never left without a working binary.
+        // The .old file (the still-running process) is cleaned up on next launch.
         let backup = current_exe.with_extension("old");
+        let _ = fs::remove_file(&backup); // clear any stale .old first
         fs::rename(&current_exe, &backup).context("failed to rename current binary")?;
-        fs::write(&current_exe, new_binary).context("failed to write new binary")?;
-        // Clean up old binary (best effort)
-        let _ = fs::remove_file(&backup);
+        if let Err(e) = fs::write(&current_exe, new_binary) {
+            // Rollback: put the original binary back.
+            let _ = fs::rename(&backup, &current_exe);
+            return Err(e).context("failed to write new binary — rolled back to previous version");
+        }
+        // Do NOT delete .old here — the running process still holds it locked.
+        // cleanup_old_binary() removes it on the next launch.
     } else {
         // Unix: write to temp, set executable, rename (atomic on same filesystem)
         let tmp_path = current_exe.with_extension("tmp");
@@ -339,6 +375,16 @@ fn replace_self(new_binary: &[u8]) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Remove a leftover `.old` binary from a previous Windows self-update.
+/// Called at startup, when the previous process no longer holds the file lock.
+/// Best-effort: silently ignores failures (file may still be locked, or absent).
+pub fn cleanup_old_binary() {
+    if let Ok(current_exe) = std::env::current_exe() {
+        let old = current_exe.with_extension("old");
+        let _ = fs::remove_file(old);
+    }
 }
 
 // ─── Persistence ─────────────────────────────────────────────────────────────

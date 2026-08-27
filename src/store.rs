@@ -22,7 +22,8 @@ pub fn open_db() -> Result<Connection> {
     Ok(conn)
 }
 
-fn db_path() -> PathBuf {
+/// Resolve the database path (RECALL_DB override, else ~/.recall/recall.sqlite3).
+pub fn db_path() -> PathBuf {
     if let Ok(p) = std::env::var("RECALL_DB") {
         return PathBuf::from(p);
     }
@@ -103,6 +104,24 @@ pub fn insert_chunk(
         params![rowid, content],
     )?;
 
+    Ok(rowid)
+}
+
+/// Insert a single chunk atomically (wraps the chunks + FTS inserts in one
+/// transaction). Use from single-item callers like `recall add`; batch callers
+/// that already hold a transaction must use `insert_chunk` to avoid nesting.
+pub fn insert_chunk_atomic(
+    conn: &Connection,
+    content: &str,
+    wing: &str,
+    room: &str,
+    dtype: &str,
+    source: &str,
+    embedding: &[f32],
+) -> Result<i64> {
+    let tx = conn.unchecked_transaction()?;
+    let rowid = insert_chunk(&tx, content, wing, room, dtype, source, embedding)?;
+    tx.commit()?;
     Ok(rowid)
 }
 
@@ -245,27 +264,32 @@ pub fn corpus_stats(conn: &Connection) -> Result<CorpusStats> {
     })
 }
 
-/// Delete all chunks in a wing.
+/// Delete all chunks in a wing. Atomic: FTS + chunks deletes commit together.
 pub fn delete_wing(conn: &Connection, wing: &str) -> Result<usize> {
+    let tx = conn.unchecked_transaction()?;
     // Delete FTS entries first
-    conn.execute(
+    tx.execute(
         "DELETE FROM fts_chunks WHERE rowid IN (SELECT id FROM chunks WHERE wing = ?1)",
         params![wing],
     )?;
-    let deleted = conn.execute("DELETE FROM chunks WHERE wing = ?1", params![wing])?;
+    let deleted = tx.execute("DELETE FROM chunks WHERE wing = ?1", params![wing])?;
+    tx.commit()?;
     Ok(deleted)
 }
 
 /// Delete chunks from a wing that are older than the given epoch timestamp.
+/// Atomic: FTS + chunks deletes commit together.
 pub fn delete_wing_older_than(conn: &Connection, wing: &str, cutoff_epoch: i64) -> Result<usize> {
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
         "DELETE FROM fts_chunks WHERE rowid IN (SELECT id FROM chunks WHERE wing = ?1 AND created_at < ?2)",
         params![wing, cutoff_epoch],
     )?;
-    let deleted = conn.execute(
+    let deleted = tx.execute(
         "DELETE FROM chunks WHERE wing = ?1 AND created_at < ?2",
         params![wing, cutoff_epoch],
     )?;
+    tx.commit()?;
     Ok(deleted)
 }
 
@@ -375,6 +399,11 @@ pub fn delete_import_source(conn: &Connection, path: &str, wing: &str) -> Result
 }
 
 /// Delete chunks by source key.
+///
+/// NOT self-wrapping: the FTS + chunks deletes are two statements. Callers MUST
+/// hold a transaction so the pair stays atomic (ingest wraps the main loop; the
+/// force/orphan paths wrap their batch). This avoids nested-transaction errors
+/// when called inside an existing `BEGIN IMMEDIATE`.
 pub fn delete_chunks_by_source(conn: &Connection, source: &str) -> Result<usize> {
     // Delete FTS entries first
     conn.execute(
@@ -387,6 +416,9 @@ pub fn delete_chunks_by_source(conn: &Connection, source: &str) -> Result<usize>
 
 /// Delete chunks by source key prefix (LIKE 'prefix%').
 /// Escapes LIKE wildcards in the prefix to prevent unintended matches.
+///
+/// NOT self-wrapping: callers MUST hold a transaction so the FTS + chunks
+/// deletes stay atomic (see `delete_chunks_by_source`).
 pub fn delete_chunks_by_source_prefix(conn: &Connection, prefix: &str) -> Result<usize> {
     let escaped = prefix
         .replace('\\', "\\\\")

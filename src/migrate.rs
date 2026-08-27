@@ -20,7 +20,7 @@ const PROGRESS_INTERVAL: usize = 1000;
 /// - Table `sources` (path, wing, content_hash, file_size, last_indexed_at, chunk_count)
 ///
 /// Strategy: copy text + embeddings directly (same model), remap schema differences.
-pub fn run_migrate(source_path: &str, batch_embed: bool) -> Result<()> {
+pub fn run_migrate(source_path: &str, batch_embed: bool, force: bool) -> Result<()> {
     let source = Path::new(source_path);
     if !source.exists() {
         anyhow::bail!("source database not found: {}", source_path);
@@ -33,6 +33,30 @@ pub fn run_migrate(source_path: &str, batch_embed: bool) -> Result<()> {
     validate_source(&src_conn)?;
 
     let dst_conn = store::open_db()?;
+
+    // Idempotence guard: refuse to migrate the same source twice (which would
+    // duplicate the entire corpus — each drawer re-inserts under a new rowid).
+    let guard_key = migration_guard_key(source_path);
+    if store::get_meta(&dst_conn, &guard_key)?.is_some() {
+        if force {
+            eprintln!("  --force: clearing previously migrated data from this source");
+            // Direct-copy migration uses source key "migrated"; re-embed uses the
+            // drawer's own source. The safest reset for a re-migration is to drop
+            // the marker and let the caller decide; here we clear the direct-copy
+            // bucket and re-run. (Re-embed sources are drawer-specific and dedup
+            // by delete-before-insert is not possible, so --force on re-embed
+            // assumes a fresh DB.)
+            let tx = dst_conn.unchecked_transaction()?;
+            store::delete_chunks_by_source(&tx, "migrated")?;
+            tx.commit()?;
+        } else {
+            eprintln!(
+                "  Already migrated from this source. Use --force to re-migrate.\n  (source: {})",
+                source_path
+            );
+            return Ok(());
+        }
+    }
 
     let total_rows = count_drawers(&src_conn)?;
     eprintln!("  Source: {} ({} drawers)", source_path, total_rows);
@@ -66,6 +90,9 @@ pub fn run_migrate(source_path: &str, batch_embed: bool) -> Result<()> {
         &crate::embed::DEFAULT_MODEL.dimensions().to_string(),
     )?;
 
+    // Record the idempotence marker so a re-run without --force is a no-op.
+    store::set_meta(&dst_conn, &guard_key, &now_epoch().to_string())?;
+
     // Checkpoint WAL — migration writes large amounts of data
     dst_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
 
@@ -76,6 +103,21 @@ pub fn run_migrate(source_path: &str, batch_embed: bool) -> Result<()> {
         stats.wings.len()
     );
     Ok(())
+}
+
+/// Meta key marking that a given source DB has been migrated. Keyed by a hash
+/// of the source path so different source DBs get independent markers.
+fn migration_guard_key(source_path: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = format!("{:x}", Sha256::digest(source_path.as_bytes()));
+    format!("migrated_from:{}", &hash[..16])
+}
+
+fn now_epoch() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 fn validate_source(conn: &Connection) -> Result<()> {
@@ -182,11 +224,30 @@ fn migrate_direct(src: &Connection, dst: &Connection, total: usize) -> Result<()
 
     let start = Instant::now();
     let mut migrated = 0;
+    let mut skipped = 0;
+    let expected_bytes = crate::embed::DEFAULT_MODEL.dimensions() * 4; // float32 LE
 
     dst.execute("BEGIN", [])?;
     for row_result in rows {
         let (content, embedding_blob, wing, room, dtype, source, source_file, created_at) =
             row_result?;
+
+        // Validate embedding blob: must be exactly dim × 4 bytes (float32 LE).
+        // A mismatch means the source used a different model or a corrupt row —
+        // inserting it would poison vector search, so skip loudly.
+        if embedding_blob.len() != expected_bytes {
+            skipped += 1;
+            if skipped <= 10 {
+                eprintln!(
+                    "  warning: skipping row (embedding {} bytes, expected {}) source={}",
+                    embedding_blob.len(),
+                    expected_bytes,
+                    source
+                );
+            }
+            continue;
+        }
+
         let effective_src = source_file.as_deref().unwrap_or(&source);
         let epoch = parse_created_at(&created_at);
 
@@ -210,6 +271,9 @@ fn migrate_direct(src: &Connection, dst: &Connection, total: usize) -> Result<()
     }
     dst.execute("COMMIT", [])?;
 
+    if skipped > 0 {
+        eprintln!("  Skipped {} rows with mismatched embedding size", skipped);
+    }
     report_progress(migrated, total, start.elapsed().as_secs());
     Ok(())
 }

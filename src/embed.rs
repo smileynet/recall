@@ -88,6 +88,20 @@ pub fn ensure_ort_runtime() -> Result<()> {
 fn ensure_ort_runtime_inner() -> Result<()> {
     let lib_path = ort_lib_path();
 
+    // Detect a corrupt/truncated cache from a prior interrupted download.
+    // The ORT runtime library is several MB; anything under 1MB is broken.
+    if lib_path.exists() {
+        if let Ok(meta) = std::fs::metadata(&lib_path) {
+            if meta.len() < 1_000_000 {
+                eprintln!(
+                    "recall: cached ONNX Runtime looks corrupt ({} bytes), re-downloading",
+                    meta.len()
+                );
+                let _ = std::fs::remove_file(&lib_path);
+            }
+        }
+    }
+
     // Download if not cached
     if !lib_path.exists() {
         download_ort_runtime(&lib_path)?;
@@ -136,15 +150,32 @@ fn download_ort_runtime(target_path: &PathBuf) -> Result<()> {
         std::io::Read::read_to_end(&mut reader, &mut body)?;
     }
 
-    // Extract the library from the archive
-    std::fs::create_dir_all(target_path.parent().unwrap())?;
+    // Extract the library from the archive to a temp file in the same dir, then
+    // atomically rename. A crash mid-extract leaves the temp file, not a
+    // truncated final file that would poison every later command.
+    let lib_dir = target_path.parent().unwrap();
+    std::fs::create_dir_all(lib_dir)?;
     let lib_name = ort_lib_filename();
 
+    let tmp = tempfile::NamedTempFile::new_in(lib_dir)?;
+    let tmp_path = tmp.path().to_path_buf();
+
     if url.ends_with(".zip") {
-        extract_lib_from_zip(&body, lib_name, target_path)?;
+        extract_lib_from_zip(&body, lib_name, &tmp_path)?;
     } else {
-        extract_lib_from_tgz(&body, lib_name, target_path)?;
+        extract_lib_from_tgz(&body, lib_name, &tmp_path)?;
     }
+
+    // Validate the extracted library is a plausible size before committing.
+    let extracted_len = std::fs::metadata(&tmp_path)?.len();
+    anyhow::ensure!(
+        extracted_len >= 1_000_000,
+        "extracted ONNX Runtime too small ({} bytes) — likely corrupt",
+        extracted_len
+    );
+
+    tmp.persist(target_path)
+        .map_err(|e| anyhow::anyhow!("failed to persist ONNX Runtime: {}", e))?;
 
     eprintln!("  Cached at: {}", target_path.display());
     Ok(())
@@ -156,10 +187,14 @@ fn extract_lib_from_tgz(data: &[u8], lib_name: &str, target_path: &PathBuf) -> R
 
     for entry in archive.entries()? {
         let mut entry = entry?;
+        let entry_size = entry.header().size().unwrap_or(0);
         let path = entry.path()?.to_path_buf();
         let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
-        // Match the library file (may be in a subdirectory like onnxruntime-linux-x64-1.20.0/lib/)
-        if filename == lib_name || filename.starts_with(lib_name) {
+        // Match the library file (may be in a subdirectory like onnxruntime-linux-x64-1.20.0/lib/).
+        // Skip zero-size entries: on Linux the archive contains symlinks
+        // (libonnxruntime.so → libonnxruntime.so.1.20.0) that share the prefix
+        // but carry no data — extracting one would produce an empty file.
+        if (filename == lib_name || filename.starts_with(lib_name)) && entry_size > 0 {
             let mut file = std::fs::File::create(target_path)?;
             std::io::copy(&mut entry, &mut file)?;
             return Ok(());
@@ -178,7 +213,7 @@ fn extract_lib_from_zip(data: &[u8], lib_name: &str, target_path: &PathBuf) -> R
     let len = data.len();
 
     // Find End of Central Directory record (last 22+ bytes)
-    let eocd_search_start = if len > 65557 { len - 65557 } else { 0 };
+    let eocd_search_start = len.saturating_sub(65557);
     let mut eocd_pos = None;
     for i in (eocd_search_start..len.saturating_sub(3)).rev() {
         if data[i] == 0x50 && data[i + 1] == 0x4b && data[i + 2] == 0x05 && data[i + 3] == 0x06 {

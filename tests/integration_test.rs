@@ -317,14 +317,23 @@ fn test_scan_cache_hit_miss() {
 fn test_embed_batch_exceeds_sub_batch() {
     let embedder = embed::Embedder::new().expect("embedder init");
     // 600 > the 256 internal SUB_BATCH → forces multiple sub-batches.
-    let owned: Vec<String> = (0..600).map(|i| format!("chunk number {i} about recall")).collect();
+    let owned: Vec<String> = (0..600)
+        .map(|i| format!("chunk number {i} about recall"))
+        .collect();
     let texts: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
 
     let embeddings = embedder.embed_batch(&texts).expect("embed_batch");
 
-    assert_eq!(embeddings.len(), texts.len(), "one embedding per input text");
+    assert_eq!(
+        embeddings.len(),
+        texts.len(),
+        "one embedding per input text"
+    );
     let dim = embedder.dimensions();
-    assert!(embeddings.iter().all(|e| e.len() == dim), "all embeddings have model dimension {dim}");
+    assert!(
+        embeddings.iter().all(|e| e.len() == dim),
+        "all embeddings have model dimension {dim}"
+    );
 
     // Sub-batching must not change results: a value embedded standalone matches its
     // position in the batch (same model, no dynamic quantization).
