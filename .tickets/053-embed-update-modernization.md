@@ -1,7 +1,7 @@
 ---
 id: "053"
 title: "Modernize embed/update: OnceLock for ORT init, computed URLs, home-dir fallback"
-status: open
+status: in_progress
 blocked_by: []
 priority: high
 validation_criteria:
