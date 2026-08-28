@@ -1,7 +1,7 @@
 ---
 id: "052"
 title: "forget/parse_duration: add confirmation, reject negatives, fix multibyte panic"
-status: in_progress
+status: done
 blocked_by: []
 priority: high
 validation_criteria:
@@ -78,3 +78,11 @@ From the 2026-08-23 review (deferred in 048). `recall forget` is destructive and
   "invalid duration '-5d'"; `--yes` → "Deleted 1 chunks"; empty wing →
   "Nothing to delete".
 - Deployed recall 0.1.0; `recall forget --help` shows `--yes`.
+
+## Resolution (2026-08-28)
+
+cmd_forget counts impact + confirms (--yes skips, non-TTY refuses, empty wing short-circuits); parse_duration char-safe, rejects non-positive + overflow via checked_mul. Added --yes flag and store::count_wing.
+
+### Verification
+1. ✓ cargo test passes — "cargo test: 76 lib + 6 bin (parse_duration) + integration/contract/snapshot all pass"
+2. ✓ forget prompts before deleting; negative/invalid durations rejected — "manual: non-TTY forget without --yes refuses (exit 1); --older-than=-5d rejected 'invalid duration'; --yes deletes; deployed recall 0.1.0 forget --help shows --yes"
