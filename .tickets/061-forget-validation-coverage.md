@@ -65,13 +65,44 @@ The remaining `read_line` call is a trivial shim — documented, not pretended-c
 
 ## Acceptance criteria
 
-- [ ] `decide` extracted and unit-tested (full matrix)
-- [ ] 4 `assert_cmd` tests added and passing; non-TTY refusal asserts `.failure()`
-- [ ] `cargo test` passes; `cargo clippy` clean; `cargo fmt` applied
-- [ ] Behavior unchanged (same CLI output/exit codes as 052 shipped)
+- [x] `decide` extracted and unit-tested (full matrix)
+- [x] 4 `assert_cmd` tests added and passing; non-TTY refusal asserts `.failure()`
+- [x] `cargo test` passes; `cargo clippy` clean; `cargo fmt` applied
+- [x] Behavior unchanged (same CLI output/exit codes as 052 shipped)
 
 ## Validation criteria
 
 - `cargo test --bin recall` → decide matrix tests pass
 - `cargo test --test cli_errors` → 4 new tests pass
 - Negative-duration test asserts `.failure()` (replaces the dismissed `exit: 0`)
+
+## Evidence (2026-08-28)
+
+- **Part A refactor:** added `enum Decision` + pure `fn decide(assume_yes, is_tty,
+  answer)` in cli.rs; `cmd_forget` routes its gate through it (I/O shell only does
+  TTY probe / prompt / stdin read). `read_yes_no` replaced by `read_line_lower`
+  (the `matches!` logic moved into `decide`).
+- **Part B seam:** added `store::open_db_at(path)` so tests seed a specific DB
+  without touching process-global `RECALL_DB` (avoids the parallel-test race the
+  review flagged). `open_db()` now delegates to it.
+- `cargo test --bin recall`: **11 passed** — 5 `decide_*` (yes-proceeds,
+  non-tty-refuses, tty-needs-prompt, affirmative-proceeds, negative/empty-aborts)
+  + 6 `parse_duration_*`.
+- `cargo test --test cli_errors`: **14 passed** — incl. `forget_non_tty_refuses_without_yes`
+  (`.failure()` + "refusing to delete" — this PINS the exit-1 I hand-waved),
+  `forget_yes_deletes` (`.success()` + "Deleted 1"), `forget_empty_wing_no_prompt`
+  ("Nothing to delete"), `forget_negative_duration_rejected` (`.failure()` +
+  "invalid duration").
+- `cargo test`: full suite green. `cargo clippy` on lib/bin/cli_errors: clean
+  (also fixed a pre-existing `into_path` deprecation in the same file).
+  `cargo fmt`: applied.
+- Deploy: test-gated `deploy-local.ps1` → 76 unit pass, release built,
+  `Installed: recall 0.1.0`, health clean, scheduled task Ready.
+
+## Accepted residual (documented, not pretended-covered)
+
+- The interactive `[y/N]` branch cannot be driven through `assert_cmd` (stdin is a
+  pipe → non-TTY; would need a PTY/rexpect). Its logic is fully covered by the
+  pure `decide` unit tests; only the trivial `read_line_lower` I/O shim is untested.
+- `integration_expanded.rs` has 2 pre-existing clippy warnings (unused `embed`
+  import, unused `conn`) — out of scope here; candidate for the 056/hygiene sweep.

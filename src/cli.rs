@@ -750,24 +750,36 @@ fn cmd_forget(wing: &str, older_than: Option<&str>, yes: bool) -> Result<i32> {
         println!("Nothing to delete in wing {:?}.", wing);
         return Ok(0);
     }
-    if !yes {
-        let scope = match older_than {
-            Some(age) => format!("{} chunks older than {} in wing {:?}", count, age, wing),
-            None => format!("all {} chunks in wing {:?}", count, wing),
-        };
-        if !stdin_is_tty() {
+    let scope = match older_than {
+        Some(age) => format!("{} chunks older than {} in wing {:?}", count, age, wing),
+        None => format!("all {} chunks in wing {:?}", count, wing),
+    };
+
+    // Resolve the confirmation decision. Pure logic lives in `decide`; this shell
+    // only performs the I/O (TTY probe, prompt, stdin read).
+    let decision = match decide(yes, stdin_is_tty(), None) {
+        Decision::NeedsPrompt => {
+            print!("Delete {}? [y/N] ", scope);
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            decide(yes, true, Some(&read_line_lower()))
+        }
+        d => d,
+    };
+    match decision {
+        Decision::Proceed => {}
+        Decision::Abort => {
+            println!("Aborted.");
+            return Ok(0);
+        }
+        Decision::RefuseNonInteractive => {
             anyhow::bail!(
                 "refusing to delete {} without confirmation (pass --yes for non-interactive use)",
                 scope
             );
         }
-        print!("Delete {}? [y/N] ", scope);
-        use std::io::Write;
-        let _ = std::io::stdout().flush();
-        if !read_yes_no() {
-            println!("Aborted.");
-            return Ok(0);
-        }
+        // NeedsPrompt is resolved above; reaching here would be a logic error.
+        Decision::NeedsPrompt => unreachable!("NeedsPrompt resolved before dispatch"),
     }
 
     let deleted = match cutoff {
@@ -779,13 +791,52 @@ fn cmd_forget(wing: &str, older_than: Option<&str>, yes: bool) -> Result<i32> {
     Ok(0)
 }
 
-/// Read a single y/n response from stdin. Default (empty/other) is No.
-fn read_yes_no() -> bool {
+/// The outcome of the forget confirmation gate. Pure — no I/O.
+#[derive(Debug, PartialEq, Eq)]
+enum Decision {
+    /// Go ahead and delete (either `--yes`, or an interactive "y"/"yes").
+    Proceed,
+    /// User declined, or default (empty/other) answer.
+    Abort,
+    /// Not a TTY and no `--yes` — refuse rather than delete unattended.
+    RefuseNonInteractive,
+    /// Interactive terminal without `--yes` — caller must prompt then re-call
+    /// `decide` with the collected answer.
+    NeedsPrompt,
+}
+
+/// Decide whether to proceed with a destructive action. Pure and exhaustively
+/// testable: `assume_yes` from `--yes`, `is_tty` resolved at the I/O edge, and
+/// `answer` = the user's typed line once a prompt has been shown (None before).
+fn decide(assume_yes: bool, is_tty: bool, answer: Option<&str>) -> Decision {
+    if assume_yes {
+        return Decision::Proceed;
+    }
+    match answer {
+        Some(ans) => {
+            if matches!(ans.trim().to_lowercase().as_str(), "y" | "yes") {
+                Decision::Proceed
+            } else {
+                Decision::Abort
+            }
+        }
+        None => {
+            if is_tty {
+                Decision::NeedsPrompt
+            } else {
+                Decision::RefuseNonInteractive
+            }
+        }
+    }
+}
+
+/// Read one line from stdin, lowercased and trimmed. Empty on EOF/error (→ Abort).
+fn read_line_lower() -> String {
     let mut input = String::new();
     if std::io::stdin().read_line(&mut input).is_ok() {
-        matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
+        input.trim().to_lowercase()
     } else {
-        false
+        String::new()
     }
 }
 
@@ -838,7 +889,41 @@ fn cmd_migrate(from: &str, batch_embed: bool, force: bool) -> Result<i32> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_duration;
+    use super::{decide, parse_duration, Decision};
+
+    #[test]
+    fn decide_yes_flag_always_proceeds() {
+        // --yes short-circuits regardless of tty / answer.
+        assert_eq!(decide(true, false, None), Decision::Proceed);
+        assert_eq!(decide(true, true, None), Decision::Proceed);
+        assert_eq!(decide(true, false, Some("n")), Decision::Proceed);
+    }
+
+    #[test]
+    fn decide_non_tty_without_yes_refuses() {
+        assert_eq!(decide(false, false, None), Decision::RefuseNonInteractive);
+    }
+
+    #[test]
+    fn decide_tty_without_answer_needs_prompt() {
+        assert_eq!(decide(false, true, None), Decision::NeedsPrompt);
+    }
+
+    #[test]
+    fn decide_affirmative_answer_proceeds() {
+        assert_eq!(decide(false, true, Some("y")), Decision::Proceed);
+        assert_eq!(decide(false, true, Some("yes")), Decision::Proceed);
+        assert_eq!(decide(false, true, Some("YES")), Decision::Proceed);
+        assert_eq!(decide(false, true, Some("  y  ")), Decision::Proceed);
+    }
+
+    #[test]
+    fn decide_negative_or_empty_answer_aborts() {
+        assert_eq!(decide(false, true, Some("n")), Decision::Abort);
+        assert_eq!(decide(false, true, Some("no")), Decision::Abort);
+        assert_eq!(decide(false, true, Some("")), Decision::Abort); // bare Enter
+        assert_eq!(decide(false, true, Some("garbage")), Decision::Abort);
+    }
 
     #[test]
     fn parse_duration_valid_units() {

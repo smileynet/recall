@@ -6,9 +6,17 @@ use serde::Serialize;
 
 /// Open the recall database (creating if needed), with WAL mode.
 pub fn open_db() -> Result<Connection> {
-    let path = db_path();
-    std::fs::create_dir_all(path.parent().unwrap())?;
-    let conn = Connection::open(&path)
+    open_db_at(&db_path())
+}
+
+/// Open a recall database at an explicit path (creating if needed), with WAL
+/// mode. Used by `open_db` (via `RECALL_DB`/default) and by tests that need a
+/// specific file without touching the process-global `RECALL_DB` env var.
+pub fn open_db_at(path: &std::path::Path) -> Result<Connection> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let conn = Connection::open(path)
         .with_context(|| format!("opening database at {}", path.display()))?;
 
     conn.execute_batch(

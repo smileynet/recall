@@ -11,7 +11,7 @@ fn recall_cmd() -> Command {
 fn with_empty_db(cmd: &mut Command) -> &mut Command {
     let dir = TempDir::new().unwrap();
     // Leak the dir so it lives through the command execution
-    let db_path = dir.into_path().join("empty.sqlite3");
+    let db_path = dir.keep().join("empty.sqlite3");
     cmd.env("RECALL_DB", db_path)
 }
 
@@ -118,4 +118,79 @@ fn invalid_model_env_warns() {
         .assert()
         .success()
         .stderr(predicate::str::contains("unknown RECALL_MODEL"));
+}
+
+// ─── forget confirmation path (ticket 061) ──────────────────────────────────
+//
+// assert_cmd stdin is always a pipe, so the spawned CLI sees a non-TTY: these
+// tests exercise the --yes and non-interactive branches. The interactive [y/N]
+// branch is covered by the pure `decide()` unit tests in src/cli.rs (it can't be
+// driven through assert_cmd — that needs a PTY).
+
+/// Create a temp DB, seed one chunk into `wing` (model-free — insert_chunk_atomic
+/// takes an arbitrary embedding), drop the connection to flush WAL, and return
+/// the (leaked) db path. The caller points `RECALL_DB` at it. Uses `open_db_at`
+/// so it never touches the process-global `RECALL_DB` (no parallel-test race).
+fn seeded_db(wing: &str) -> std::path::PathBuf {
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.keep().join("seeded.sqlite3");
+    {
+        let conn = recall::store::open_db_at(&db_path).unwrap();
+        // Any &[f32] works; these tests only count/delete, never rank.
+        recall::store::insert_chunk_atomic(
+            &conn,
+            "seed chunk",
+            wing,
+            "general",
+            "fact",
+            "test",
+            &[0.1f32; 768],
+        )
+        .unwrap();
+        // conn dropped here → WAL flushed before the child process opens the DB.
+    }
+    db_path
+}
+
+#[test]
+fn forget_non_tty_refuses_without_yes() {
+    let db = seeded_db("victim");
+    recall_cmd()
+        .env("RECALL_DB", &db)
+        .args(["forget", "--wing", "victim"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("refusing to delete"));
+}
+
+#[test]
+fn forget_yes_deletes() {
+    let db = seeded_db("victim");
+    recall_cmd()
+        .env("RECALL_DB", &db)
+        .args(["forget", "--wing", "victim", "--yes"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Deleted 1"));
+}
+
+#[test]
+fn forget_empty_wing_no_prompt() {
+    let mut cmd = recall_cmd();
+    with_empty_db(&mut cmd);
+    cmd.args(["forget", "--wing", "nonexistent", "--yes"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Nothing to delete"));
+}
+
+#[test]
+fn forget_negative_duration_rejected() {
+    let db = seeded_db("victim");
+    recall_cmd()
+        .env("RECALL_DB", &db)
+        .args(["forget", "--wing", "victim", "--older-than=-5d", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid duration"));
 }
