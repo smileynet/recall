@@ -3,7 +3,7 @@ id: "053"
 title: "Modernize embed/update: OnceLock for ORT init, computed URLs, home-dir fallback"
 status: open
 blocked_by: []
-priority: medium
+priority: high
 validation_criteria:
   - "cargo test + clippy clean"
   - "no unsafe static mut in embed.rs"
