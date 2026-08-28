@@ -1,0 +1,4 @@
+# Project config — overrides for this repo, committed and shared.
+
+[close]
+require_resolution = true
