@@ -1,7 +1,7 @@
 ---
 id: "061"
 title: "Test coverage for forget confirmation (close 052 validation gaps)"
-status: open
+status: in_progress
 blocked_by: ["052"]
 priority: high
 validation_criteria:
