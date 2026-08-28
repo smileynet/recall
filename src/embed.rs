@@ -4,35 +4,46 @@ use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 #[cfg(target_os = "windows")]
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Once;
+use std::sync::OnceLock;
 
 // ─── ONNX Runtime management (load-dynamic) ─────────────────────────────────
 
 /// The ONNX Runtime version required by ort 2.0.0-rc.9.
 const ORT_VERSION: &str = "1.20.0";
 
-/// Platform-specific download URL for ONNX Runtime from Microsoft's GitHub releases.
-fn ort_download_url() -> &'static str {
+/// Platform-specific ONNX Runtime release: the archive name slug and its
+/// extension. Single `#[cfg]` cascade — the download URL and (in ticket 051) the
+/// pinned SHA-256 both key off this, so a version bump touches only `ORT_VERSION`.
+fn ort_platform() -> (&'static str, &'static str) {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     {
-        "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-win-x64-1.20.0.zip"
+        ("win-x64", "zip")
     }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
-        "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-linux-x64-1.20.0.tgz"
+        ("linux-x64", "tgz")
     }
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     {
-        "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-osx-x86_64-1.20.0.tgz"
+        ("osx-x86_64", "tgz")
     }
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
-        "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-osx-arm64-1.20.0.tgz"
+        ("osx-arm64", "tgz")
     }
     #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
     {
-        "https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-linux-aarch64-1.20.0.tgz"
+        ("linux-aarch64", "tgz")
     }
+}
+
+/// Platform-specific download URL for ONNX Runtime, derived from `ORT_VERSION`.
+fn ort_download_url() -> String {
+    let (slug, ext) = ort_platform();
+    format!(
+        "https://github.com/microsoft/onnxruntime/releases/download/v{v}/onnxruntime-{slug}-{v}.{ext}",
+        v = ORT_VERSION,
+    )
 }
 
 /// Platform-specific library filename.
@@ -51,42 +62,48 @@ fn ort_lib_filename() -> &'static str {
     }
 }
 
+/// Resolve the recall home directory: `USERPROFILE` (Windows) or `HOME` (Unix).
+/// Fails loudly rather than falling back to a volatile location — recall's corpus
+/// must be durable, so an unresolvable home is an error with remediation, not a
+/// silent write to CWD/temp. Escape hatches: `RECALL_DB` (database) and
+/// `FASTEMBED_CACHE_DIR` (model cache) bypass home entirely.
+fn recall_home() -> Result<PathBuf> {
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "cannot determine home directory: neither USERPROFILE nor HOME is set. \
+                 Set one, or set RECALL_DB (database) / FASTEMBED_CACHE_DIR (model cache) \
+                 to explicit paths."
+            )
+        })
+}
+
 /// Directory where we cache the ONNX Runtime library.
-fn ort_lib_dir() -> PathBuf {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".recall").join("lib")
+fn ort_lib_dir() -> Result<PathBuf> {
+    Ok(recall_home()?.join(".recall").join("lib"))
 }
 
 /// Full path to the cached ONNX Runtime library.
-fn ort_lib_path() -> PathBuf {
-    ort_lib_dir().join(ort_lib_filename())
+fn ort_lib_path() -> Result<PathBuf> {
+    ort_lib_dir().map(|d| d.join(ort_lib_filename()))
 }
 
 /// Ensure ONNX Runtime is available and initialize ort to use it.
 /// Downloads on first run if not cached. Must be called before any ort API usage.
-static ORT_INIT: Once = Once::new();
-static mut ORT_INIT_ERROR: Option<String> = None;
+/// Runs once per process; the result (including any error) is cached and replayed.
+static ORT_INIT: OnceLock<Result<(), String>> = OnceLock::new();
 
 pub fn ensure_ort_runtime() -> Result<()> {
-    ORT_INIT.call_once(|| {
-        if let Err(e) = ensure_ort_runtime_inner() {
-            unsafe {
-                ORT_INIT_ERROR = Some(format!("{:#}", e));
-            }
-        }
-    });
-    unsafe {
-        if let Some(ref err) = ORT_INIT_ERROR {
-            anyhow::bail!("ONNX Runtime initialization failed: {}", err);
-        }
-    }
-    Ok(())
+    ORT_INIT
+        .get_or_init(|| ensure_ort_runtime_inner().map_err(|e| format!("{:#}", e)))
+        .clone()
+        .map_err(|e| anyhow::anyhow!("ONNX Runtime initialization failed: {}", e))
 }
 
 fn ensure_ort_runtime_inner() -> Result<()> {
-    let lib_path = ort_lib_path();
+    let lib_path = ort_lib_path()?;
 
     // Detect a corrupt/truncated cache from a prior interrupted download.
     // The ORT runtime library is several MB; anything under 1MB is broken.
@@ -119,7 +136,7 @@ fn download_ort_runtime(target_path: &PathBuf) -> Result<()> {
         ORT_VERSION
     );
 
-    let response = ureq::get(url)
+    let response = ureq::get(&url)
         .call()
         .map_err(|e| anyhow::anyhow!("Failed to download ONNX Runtime: {}", e))?;
 
@@ -401,16 +418,11 @@ pub fn check_model_mismatch(conn: &rusqlite::Connection) -> Model {
 
 /// Stable model cache directory: ~/.recall/models/
 /// Respects FASTEMBED_CACHE_DIR env var as override.
-fn model_cache_dir() -> std::path::PathBuf {
+fn model_cache_dir() -> Result<std::path::PathBuf> {
     if let Ok(dir) = std::env::var("FASTEMBED_CACHE_DIR") {
-        return std::path::PathBuf::from(dir);
+        return Ok(std::path::PathBuf::from(dir));
     }
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_else(|_| ".".to_string());
-    std::path::PathBuf::from(home)
-        .join(".recall")
-        .join("models")
+    Ok(recall_home()?.join(".recall").join("models"))
 }
 
 /// Embedding model wrapper — loads once, reuses for batch operations.
@@ -429,7 +441,7 @@ impl Embedder {
     /// Load a specific model.
     pub fn with_model(which: Model) -> Result<Self> {
         ensure_ort_runtime()?;
-        let cache_dir = model_cache_dir();
+        let cache_dir = model_cache_dir()?;
         // Override HF_HOME so hf-hub downloads to our controlled cache dir,
         // not a stale/nonexistent path from the user's environment.
         std::env::set_var("HF_HOME", &cache_dir);
@@ -481,6 +493,35 @@ impl Embedder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ort_url_derives_from_version() {
+        let url = ort_download_url();
+        let (slug, ext) = ort_platform();
+        // URL is built from ORT_VERSION + platform table — no bare version literal.
+        assert!(
+            url.contains(&format!("v{}/", ORT_VERSION)),
+            "url must embed the release tag from ORT_VERSION: {url}"
+        );
+        assert!(
+            url.contains(&format!("onnxruntime-{}-{}.{}", slug, ORT_VERSION, ext)),
+            "url must use the platform slug/ext and version: {url}"
+        );
+        assert!(
+            url.ends_with(&format!(".{}", ext)),
+            "url ext must match: {url}"
+        );
+        assert!(
+            url.starts_with("https://github.com/microsoft/onnxruntime/releases/download/"),
+            "url host/path unchanged: {url}"
+        );
+    }
+
+    #[test]
+    fn ort_platform_ext_is_zip_or_tgz() {
+        let (_slug, ext) = ort_platform();
+        assert!(matches!(ext, "zip" | "tgz"), "unexpected ext: {ext}");
+    }
 
     #[test]
     fn from_name_bge_base_variants() {

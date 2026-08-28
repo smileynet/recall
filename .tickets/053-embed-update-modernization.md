@@ -57,20 +57,42 @@ pub fn ensure_ort_runtime() -> Result<()> {
 - [ ] Return `String` (callers unaffected). Collapses 5 literals → 1 template.
 - [ ] This same `(slug, ext)` table is where 051 adds the per-platform SHA-256.
 
-### L1 — Home-directory fallback (`src/embed.rs`)
-- [ ] De-dup the cascade into a `recall_home()` helper used by both `ort_lib_dir`
-      and `model_cache_dir`
-- [ ] Decision: fall back to `std::env::temp_dir()` (not `"."`), and log a warning —
-      keeps recall functional in headless/service contexts without silently
-      writing to a possibly read-only CWD. (Document the choice.)
+### L1 — Home-directory resolution: fail loudly (`src/embed.rs`)
+The `"."` fallback silently writes a persistent corpus to a volatile CWD. Since
+recall's core promise is a durable cross-session store, an unresolvable home must
+be a clear error, not a silent write to a location that may be read-only or wiped.
+Temp-dir fallback was rejected: it would scatter memories across runs / lose data
+on temp cleanup while *looking* like success.
+- [ ] De-dup the cascade into a `recall_home() -> Result<PathBuf>` helper used by
+      both `ort_lib_dir` and `model_cache_dir`
+- [ ] On neither USERPROFILE nor HOME set: return an error naming the remediation
+      (set one, or set `RECALL_DB` / `FASTEMBED_CACHE_DIR` to explicit paths).
+      Escape hatch already exists — `RECALL_DB` bypasses home for the DB and
+      `FASTEMBED_CACHE_DIR` for the model cache, so failing loudly strands no one.
+- [ ] Propagate the `Result` through `ort_lib_dir`/`model_cache_dir` callers
+      (trace call sites; keep propagation clean)
+
+```rust
+fn recall_home() -> Result<PathBuf> {
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!(
+            "cannot determine home directory: neither USERPROFILE nor HOME is set. \
+             Set one, or set RECALL_DB (database) / FASTEMBED_CACHE_DIR (model cache) \
+             to explicit paths."
+        ))
+}
+```
 
 ## Acceptance criteria
 
-- [ ] No `unsafe` in `embed.rs` ORT init path
-- [ ] ORT URL derived from `ORT_VERSION` (change version in one place); grep shows
+- [x] No `unsafe` in `embed.rs` ORT init path
+- [x] ORT URL derived from `ORT_VERSION` (change version in one place); grep shows
       no bare `1.20.0` in URL literals
-- [ ] Single `recall_home()` helper; no `"."` silent-CWD fallback
-- [ ] `cargo test` passes, `cargo clippy` clean
+- [x] Single `recall_home() -> Result<PathBuf>` helper; unresolvable home fails
+      loudly with remediation (no `"."` / temp-dir silent write)
+- [x] `cargo test` passes, `cargo clippy` clean
 
 ## Validation criteria
 
@@ -78,3 +100,35 @@ pub fn ensure_ort_runtime() -> Result<()> {
 - Grep: no `static mut` in `src/embed.rs`; no duplicated home cascade
 - Bumping `ORT_VERSION` in one place changes the resolved download URL (unit test
   on the URL builder)
+
+## Evidence (2026-08-28)
+
+- **M3:** `Once` + `static mut ORT_INIT_ERROR` → `OnceLock<Result<(), String>>` via
+  `get_or_init(...).clone()`. Grep `static mut|unsafe` in embed.rs → **zero matches**.
+- **M1:** 5 hardcoded URLs → one `ort_platform() -> (slug, ext)` table + a single
+  `format!` keyed off `ORT_VERSION`. New unit tests `ort_url_derives_from_version`
+  and `ort_platform_ext_is_zip_or_tgz` pass (assert the URL embeds `ORT_VERSION`
+  and the platform slug/ext — bumping the const changes the URL). `download_ort_runtime`
+  still branches on `url.ends_with(".zip")` (String supports it).
+- **L1:** `recall_home() -> Result<PathBuf>` (fail-loud with remediation naming
+  `RECALL_DB`/`FASTEMBED_CACHE_DIR`) replaces the duplicated `USERPROFILE→HOME→"."`
+  cascade in `ort_lib_dir` and `model_cache_dir`; both now return `Result`,
+  propagated through `ort_lib_path`/`ensure_ort_runtime_inner` and `with_model`.
+- `cargo test`: **78 lib** (was 76, +2 URL tests) + 11 bin + 14 cli_errors + all
+  integration/golden/contract/snapshot — all green.
+- `cargo clippy --all-targets`: clean. `cargo fmt`: applied.
+- Deploy: test-gated `deploy-local.ps1` → 78 pass, release built, `Installed:
+  recall 0.1.0`, health clean, scheduled task Ready. Live `recall search` returns
+  results (exercises OnceLock init + `model_cache_dir()?` end-to-end).
+
+## Unblocks 051
+
+`ort_platform() -> (slug, ext)` is the single version-keyed table 051's ORT
+SHA-256 (H1) slots into. Before starting 051, re-verify its plan references this
+function.
+
+## Follow-up noted (out of scope)
+
+Stale PowerShell profile hook `crew-research/tools/recall/profile-hook.ps1`
+(deleted path) errors on every shell start — candidate for the 056 hygiene sweep
+(it references the pre-migration Python recall location).
