@@ -76,6 +76,9 @@ enum Commands {
         wing: String,
         #[arg(long)]
         older_than: Option<String>,
+        /// Skip the confirmation prompt (required for non-interactive use)
+        #[arg(long)]
+        yes: bool,
     },
     /// Migrate from a Python recall database
     Migrate {
@@ -158,7 +161,11 @@ pub fn run() -> i32 {
         Commands::Prime { wing } => cmd_prime(wing.as_deref()),
         Commands::Status => cmd_status(),
         Commands::Health { json } => cmd_health(json),
-        Commands::Forget { wing, older_than } => cmd_forget(&wing, older_than.as_deref()),
+        Commands::Forget {
+            wing,
+            older_than,
+            yes,
+        } => cmd_forget(&wing, older_than.as_deref(), yes),
         Commands::Migrate { from, embed, force } => cmd_migrate(&from, embed, force),
         Commands::Telemetry { action } => match action {
             TelemetryAction::Status => telemetry::cmd_telemetry_status(),
@@ -717,43 +724,101 @@ fn discover_project_coverage(import_wings: &[String]) -> (usize, usize, Vec<Stri
     (discoverable.len(), covered.len(), missing)
 }
 
-fn cmd_forget(wing: &str, older_than: Option<&str>) -> Result<i32> {
+fn cmd_forget(wing: &str, older_than: Option<&str>, yes: bool) -> Result<i32> {
     let db = store::open_db()?;
 
-    let deleted = if let Some(age_str) = older_than {
-        let seconds = parse_duration(age_str).ok_or_else(|| {
-            anyhow::anyhow!("invalid duration '{}' (use e.g. 90d, 24h, 4w)", age_str)
-        })?;
-        let cutoff = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64
-            - seconds;
-        store::delete_wing_older_than(&db, wing, cutoff)?
-    } else {
-        store::delete_wing(&db, wing)?
+    // Resolve the cutoff (if any) up front so we can both count and delete.
+    let cutoff = match older_than {
+        Some(age_str) => {
+            let seconds = parse_duration(age_str).ok_or_else(|| {
+                anyhow::anyhow!("invalid duration '{}' (use e.g. 90d, 24h, 4w)", age_str)
+            })?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            Some(now - seconds)
+        }
+        None => None,
+    };
+
+    // Show impact and confirm before deleting — this is the only destructive
+    // command. `--yes` skips the prompt; a non-TTY without `--yes` refuses
+    // rather than deleting unattended.
+    let count = store::count_wing(&db, wing, cutoff)?;
+    if count == 0 {
+        println!("Nothing to delete in wing {:?}.", wing);
+        return Ok(0);
+    }
+    if !yes {
+        let scope = match older_than {
+            Some(age) => format!("{} chunks older than {} in wing {:?}", count, age, wing),
+            None => format!("all {} chunks in wing {:?}", count, wing),
+        };
+        if !stdin_is_tty() {
+            anyhow::bail!(
+                "refusing to delete {} without confirmation (pass --yes for non-interactive use)",
+                scope
+            );
+        }
+        print!("Delete {}? [y/N] ", scope);
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        if !read_yes_no() {
+            println!("Aborted.");
+            return Ok(0);
+        }
+    }
+
+    let deleted = match cutoff {
+        Some(c) => store::delete_wing_older_than(&db, wing, c)?,
+        None => store::delete_wing(&db, wing)?,
     };
 
     println!("Deleted {} chunks from wing {:?}", deleted, wing);
     Ok(0)
 }
 
+/// Read a single y/n response from stdin. Default (empty/other) is No.
+fn read_yes_no() -> bool {
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_ok() {
+        matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
+    } else {
+        false
+    }
+}
+
+/// Whether stdin is an interactive terminal.
+fn stdin_is_tty() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal()
+}
+
 /// Parse a duration string like "90d", "24h", "4w" into seconds.
+/// Returns `None` for empty, non-positive, or malformed input. The suffix split
+/// is char-safe (a multibyte trailing char yields `None`, never a panic).
 fn parse_duration(s: &str) -> Option<i64> {
     let s = s.trim();
-    if s.is_empty() {
+    // Split off the last character safely (byte `split_at` would panic on a
+    // multibyte boundary, e.g. a pasted "90d…").
+    let last = s.chars().next_back()?;
+    let num_str = &s[..s.len() - last.len_utf8()];
+    let num: i64 = num_str.parse().ok()?;
+    // Reject non-positive durations: a negative would make the forget cutoff a
+    // future timestamp and delete everything; zero is meaningless.
+    if num <= 0 {
         return None;
     }
-    let (num_str, suffix) = s.split_at(s.len() - 1);
-    let num: i64 = num_str.parse().ok()?;
-    match suffix {
-        "s" => Some(num),
-        "m" => Some(num * 60),
-        "h" => Some(num * 3600),
-        "d" => Some(num * 86400),
-        "w" => Some(num * 7 * 86400),
-        _ => None,
-    }
+    let unit = match last {
+        's' => 1,
+        'm' => 60,
+        'h' => 3600,
+        'd' => 86400,
+        'w' => 7 * 86400,
+        _ => return None,
+    };
+    num.checked_mul(unit)
 }
 
 fn cmd_migrate(from: &str, batch_embed: bool, force: bool) -> Result<i32> {
@@ -769,4 +834,54 @@ fn cmd_migrate(from: &str, batch_embed: bool, force: bool) -> Result<i32> {
     guard::install_timeout();
     migrate::run_migrate(from, batch_embed, force)?;
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_duration;
+
+    #[test]
+    fn parse_duration_valid_units() {
+        assert_eq!(parse_duration("30s"), Some(30));
+        assert_eq!(parse_duration("5m"), Some(300));
+        assert_eq!(parse_duration("2h"), Some(7200));
+        assert_eq!(parse_duration("90d"), Some(90 * 86400));
+        assert_eq!(parse_duration("4w"), Some(4 * 7 * 86400));
+    }
+
+    #[test]
+    fn parse_duration_trims_whitespace() {
+        assert_eq!(parse_duration("  7d  "), Some(7 * 86400));
+    }
+
+    #[test]
+    fn parse_duration_rejects_non_positive() {
+        assert_eq!(parse_duration("-5d"), None, "negative must be rejected");
+        assert_eq!(parse_duration("0d"), None, "zero must be rejected");
+        assert_eq!(parse_duration("-1h"), None);
+    }
+
+    #[test]
+    fn parse_duration_rejects_malformed() {
+        assert_eq!(parse_duration(""), None);
+        assert_eq!(parse_duration("d"), None, "no number");
+        assert_eq!(parse_duration("10"), None, "no unit");
+        assert_eq!(parse_duration("10x"), None, "unknown unit");
+        assert_eq!(parse_duration("abcd"), None);
+    }
+
+    #[test]
+    fn parse_duration_multibyte_suffix_no_panic() {
+        // A pasted multibyte trailing char must return None, never panic on a
+        // non-char-boundary byte split.
+        assert_eq!(parse_duration("90ð"), None);
+        assert_eq!(parse_duration("5€"), None);
+        assert_eq!(parse_duration("日"), None);
+    }
+
+    #[test]
+    fn parse_duration_no_overflow_panic() {
+        // Huge value × unit must not panic (checked_mul → None).
+        assert_eq!(parse_duration("9999999999999999999w"), None);
+    }
 }

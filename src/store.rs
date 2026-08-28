@@ -264,6 +264,24 @@ pub fn corpus_stats(conn: &Connection) -> Result<CorpusStats> {
     })
 }
 
+/// Count chunks in a wing (optionally only those older than a cutoff). Used to
+/// show the impact of a `forget` before confirming.
+pub fn count_wing(conn: &Connection, wing: &str, older_than: Option<i64>) -> Result<usize> {
+    let count: i64 = match older_than {
+        Some(cutoff) => conn.query_row(
+            "SELECT COUNT(*) FROM chunks WHERE wing = ?1 AND created_at < ?2",
+            params![wing, cutoff],
+            |r| r.get(0),
+        )?,
+        None => conn.query_row(
+            "SELECT COUNT(*) FROM chunks WHERE wing = ?1",
+            params![wing],
+            |r| r.get(0),
+        )?,
+    };
+    Ok(count as usize)
+}
+
 /// Delete all chunks in a wing. Atomic: FTS + chunks deletes commit together.
 pub fn delete_wing(conn: &Connection, wing: &str) -> Result<usize> {
     let tx = conn.unchecked_transaction()?;
