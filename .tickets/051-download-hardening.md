@@ -1,7 +1,7 @@
 ---
 id: "051"
 title: "Fix self-update (broken: .zip/.tar.xz not handled) + checksums + timeout"
-status: open
+status: in_progress
 blocked_by: ["053"]
 priority: high
 validation_criteria: 
