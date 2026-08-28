@@ -1,7 +1,7 @@
 ---
 id: "061"
 title: "Test coverage for forget confirmation (close 052 validation gaps)"
-status: in_progress
+status: done
 blocked_by: ["052"]
 priority: high
 validation_criteria:
@@ -106,3 +106,11 @@ The remaining `read_line` call is a trivial shim — documented, not pretended-c
   pure `decide` unit tests; only the trivial `read_line_lower` I/O shim is untested.
 - `integration_expanded.rs` has 2 pre-existing clippy warnings (unused `embed`
   import, unused `conn`) — out of scope here; candidate for the 056/hygiene sweep.
+
+## Resolution (2026-08-28)
+
+Extracted pure decide() (5 unit tests) + added store::open_db_at seam; 4 assert_cmd tests pin the non-TTY refusal exit-1, --yes, empty-wing, and bad-duration paths. Interactive y/N branch documented as covered via decide unit tests (assert_cmd stdin is non-TTY).
+
+### Verification
+1. ✓ decide() matrix unit-tested — "cargo test --bin recall: 11 passed (5 decide_* matrix + 6 parse_duration)"
+2. ✓ assert_cmd tests cover non-tty refuse, --yes, empty wing, bad duration — "cargo test --test cli_errors: 14 passed incl forget_non_tty_refuses_without_yes (.failure + refusing to delete), forget_yes_deletes, forget_empty_wing_no_prompt, forget_negative_duration_rejected (.failure + invalid duration)"
