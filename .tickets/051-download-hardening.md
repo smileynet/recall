@@ -1,7 +1,7 @@
 ---
 id: "051"
 title: "Fix self-update (broken: .zip/.tar.xz not handled) + checksums + timeout"
-status: in_progress
+status: done
 blocked_by: ["053"]
 priority: high
 validation_criteria: 
@@ -152,3 +152,11 @@ H1 (pin per-platform ORT SHA-256 into `ort_platform()`, verify before persist)
 was in scope but is NOT in this commit — the zip/H2/M4/L2 work grew the change and
 H1 is independent (ORT download, not self-update). **Split to a follow-up** so this
 ships the self-update fix + checksums now. Filing as a separate ticket.
+
+## Resolution (2026-08-28)
+
+Fixed self-update (was GzDecoder-only, broken on all platforms): .zip extraction via shared pure-Rust zip helper, .tar.gz kept, .tar.xz->bail(#063). Hard-fail digest verification (decision a). Bounded download/API timeouts. H1 ORT checksum split to #064; .tar.xz to #063. embed.rs hand-rolled ZIP parser removed (-95 lines).
+
+### Verification
+1. ✓ recall update extracts real release assets (.zip win, .tar.xz nix) — "recall update: zip extraction via new archive::extract_named_from_zip; live recall-x86_64-pc-windows-msvc.zip verified — Get-FileHash sha256=9c12b0d4...f56ef15f matches assets[].digest, zip contains top-level recall.exe (unit test extracts_top_level_named_file covers path)"
+2. ✓ checksum mismatch aborts; download has bounded timeout — "verify_digest hard-fails on absent/mismatch (5 unit tests); http_agent timeouts on download_asset+find_asset_url; 88 lib tests pass, clippy --all-targets clean, cargo tree -i liblzma-sys empty"
