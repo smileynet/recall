@@ -1,7 +1,7 @@
 ---
 id: "052"
 title: "forget/parse_duration: add confirmation, reject negatives, fix multibyte panic"
-status: open
+status: in_progress
 blocked_by: []
 priority: high
 validation_criteria:
