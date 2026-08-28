@@ -1,7 +1,7 @@
 ---
 id: "062"
 title: "Fix unused import/var in integration_expanded.rs (clippy clean)"
-status: open
+status: in_progress
 blocked_by: []
 priority: low
 validation_criteria:
