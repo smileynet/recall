@@ -2,7 +2,7 @@
 id: "051"
 title: "Harden self-update and ORT download: checksums, zip support, timeout"
 status: open
-blocked_by: []
+blocked_by: ["053"]
 priority: high
 validation_criteria:
   - "cargo test passes"
