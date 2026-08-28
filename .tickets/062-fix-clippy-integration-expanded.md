@@ -1,7 +1,7 @@
 ---
 id: "062"
 title: "Fix unused import/var in integration_expanded.rs (clippy clean)"
-status: in_progress
+status: done
 blocked_by: []
 priority: low
 validation_criteria:
@@ -52,3 +52,11 @@ clean, so future tickets get a noisy "clippy clean" signal. Verified 2026-08-28.
 - `cargo test --test integration_expanded`: 5 passed. Full `cargo test`: all
   binaries green (76 lib + 11 bin + 14 cli_errors + others).
 - `cargo fmt --check`: clean.
+
+## Resolution (2026-08-28)
+
+Removed unused embed import and unused tmp/conn in test_scan_detects_v3_session_dir (reads fixtures off disk, no DB needed). clippy --all-targets now clean.
+
+### Verification
+1. ✓ cargo clippy --all-targets clean — "cargo clippy --all-targets: no warnings (was 2)"
+2. ✓ cargo test passes — "cargo test --test integration_expanded: 5 passed; full cargo test all green"
