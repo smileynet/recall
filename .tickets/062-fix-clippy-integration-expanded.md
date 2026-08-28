@@ -36,10 +36,19 @@ clean, so future tickets get a noisy "clippy clean" signal. Verified 2026-08-28.
 
 ## Acceptance criteria
 
-- [ ] `cargo clippy --all-targets` clean (no warnings)
-- [ ] `cargo test` passes (test behavior unchanged)
+- [x] `cargo clippy --all-targets` clean (no warnings)
+- [x] `cargo test` passes (test behavior unchanged)
 
 ## Validation criteria
 
 - `cargo clippy --all-targets 2>&1` → no `warning:` lines
 - `cargo test --test integration_expanded` → all pass
+
+## Evidence (2026-08-28)
+
+- Removed `embed` from the import; dropped the unused `tmp`/`conn` in
+  `test_scan_detects_v3_session_dir` (it only reads fixtures off disk).
+- `cargo clippy --all-targets`: no warnings (previously 2).
+- `cargo test --test integration_expanded`: 5 passed. Full `cargo test`: all
+  binaries green (76 lib + 11 bin + 14 cli_errors + others).
+- `cargo fmt --check`: clean.

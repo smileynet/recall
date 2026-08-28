@@ -4,7 +4,7 @@ mod common;
 
 use std::path::PathBuf;
 
-use recall::{embed, scan, search, store};
+use recall::{scan, search, store};
 use tempfile::TempDir;
 
 fn fixtures_dir() -> PathBuf {
@@ -135,9 +135,7 @@ fn compute_file_hash(path: &std::path::Path) -> String {
 
 #[test]
 fn test_scan_detects_v3_session_dir() {
-    let tmp = TempDir::new().unwrap();
-    let conn = setup_db(&tmp);
-
+    // This test only inspects the v3 fixture on disk — no DB needed.
     // v3 sessions have messages.jsonl inside sess_*/  directories
     // Our scan_for_changes only looks for *.jsonl at depth 1
     // v3 format is handled differently — it looks in subdirs
