@@ -47,51 +47,87 @@ the release JSON with serde_json — reading `assets[].digest` is free.
 
 ## What to build
 
-### M4 (now P1 bug) — Extract zip AND tar.xz in self-update (`src/update.rs`)
-- [ ] Detect archive type by asset extension (`.zip` / `.tar.xz` / `.tar.gz`);
-      `.tar.*` needs a two-suffix check (`Path::extension()` only returns the last)
-- [ ] `.zip` → `zip` crate `by_name`; `.tar.xz` → `xz2`/`liblzma` + `tar`;
-      keep `.tar.gz` via existing `flate2`+`tar`
-- [ ] New deps required: `zip` (pin exactly, trim to `deflate` feature) and an xz
-      decoder (`xz2`). Confirm licenses/build (xz2 links liblzma — consider
-      `liblzma`/`ruzstd`-style pure-Rust alt if C toolchain is unwanted)
-- [ ] Factor the ORT zip parse from `embed.rs::extract_lib_from_zip` into a shared
-      extract-to-bytes helper (the review notes it already builds `Vec<u8>` before
-      writing — trivial split)
+Research + code review (2026-08-28, `.scratch/research/xz-decoder.md`,
+`.scratch/research/zip-minimal.md`, `.scratch/review/embed-zip-extract.md`,
+`.scratch/review/update-insertion.md`) refined the plan below. Line numbers
+re-verified post-053 (update.rs unchanged by 053; ranges were ~2-15 low in the
+original draft — corrected here).
+
+### Dependencies (decided)
+- **zip** `= "8.6.0"`, `default-features = false`, `features = ["deflate"]` —
+  pure-Rust (miniz_oxide), no C toolchain, all cargo-dist zips need. MSRV 1.88.
+  Pin EXACTLY (heavy API churn); don't name the `ZipFile` type (reader-generic).
+- **xz decoder** — CORRECTION: the ticket's "liblzma-rs pure-Rust" was wrong;
+  that crate is the C-linked `xz2` fork. Real pure-Rust decode-only options:
+  `lzma-rs` (152★, `forbid(unsafe)`, decode-first — recommended) or `lzma-rust2`
+  (full XZ, streaming `XzReader`). **Spike required:** confirm `lzma-rs`'s .xz
+  subset decodes a real cargo-dist `.tar.xz` (multi-stream/check/BCJ) before
+  committing; fall back to `lzma-rust2` (streaming, no full-buffer) if it fails.
+  Verify `cargo tree -i liblzma-sys` is empty after (no transitive C pull-in).
+
+### Shared archive helper (new `src/archive.rs`)
+- [ ] `pub fn extract_named_from_zip(bytes: &[u8], wanted: &str) -> Result<Vec<u8>>`
+      via `zip::ZipArchive` over a `Cursor`, match `name.ends_with(wanted)` (NOT
+      `by_name` — ORT dll sits in a versioned subdir), `read_to_end` → `Vec<u8>`.
+- [ ] Replace embed.rs hand-rolled `extract_lib_from_zip` (L224-316, ~90 lines,
+      no ZIP64/CRC, store+deflate only) with a call to the helper + `fs::write`.
+      Keep `extract_lib_from_tgz` and the ORT dispatch unchanged.
+
+### M4 (P1 bug) — Extract zip AND tar.xz in self-update (`src/update.rs`)
+- [ ] `extract_binary` (L315-343) is `GzDecoder`-only → add `asset_name` param,
+      move current body into `extract_tar_gz`, dispatch on extension:
+      `.zip` → `archive::extract_named_from_zip`; `.tar.xz` → xz decoder + `tar`;
+      `.tar.gz` → existing path. `.tar.*` needs a two-suffix check.
 
 ### H2 — Verify update checksum via `assets[].digest` (`src/update.rs`)
-- [ ] In `find_asset_url`, capture `assets[].digest` alongside the download URL
-- [ ] After `download_asset`, compute `sha2::Sha256` and compare (constant-time)
-      before `replace_self`; mismatch aborts
-- [ ] If `digest` is absent (older releases), warn that integrity is unverified
-- sha2 + serde_json already present — zero new deps for this item
+- [ ] `find_asset_url` (L217-282) reads the asset object at L258-260 — capture the
+      sibling `digest` field there. Change return `String` → `AssetInfo { url,
+      digest: Option<String>, name }`.
+- [ ] In `cmd_update` (L191-212), insert `verify_digest(&bytes, digest)` between
+      download (L207) and extract (L208), using the already-present `sha2`.
+- [ ] Digest absent (older releases) → **[OPEN DECISION a]** warn-and-proceed vs
+      hard-fail. Live release HAS digest on every asset (verified), so absence
+      means a very old release.
 
 ### H1 — Verify ORT runtime checksum (`src/embed.rs`)
-- [ ] Add per-platform SHA-256 into the `ort_platform()` table 053 introduces
+- [ ] Add per-platform SHA-256 to the `ort_platform()` table (053 created it —
+      extend `(slug, ext)` → `(slug, ext, sha256)`).
 - [ ] Verify downloaded bytes before extract/persist; mismatch aborts (temp file
-      auto-cleans). Replaces the weak `>1MB` heuristic.
-- Note: ORT is NOT a GitHub-authored release, so `assets[].digest` doesn't apply —
-      hashes are vendored per `ORT_VERSION` bump. Document in the table.
+      auto-cleans). Replaces the weak `>1MB` heuristic. Hashes vendored per
+      `ORT_VERSION` bump (ORT isn't a GitHub release, no `assets[].digest`).
 
 ### L2 — Download timeout (`src/update.rs`)
-- [ ] `download_asset` uses bare `ureq::get(url).call()` with NO timeout — a stall
-      hangs forever. ureq 2.x read/write timeouts default to INFINITE.
-- [ ] Build a shared agent with `timeout_connect`, `timeout_read`, and an overall
-      `.timeout(~120s)` watchdog; apply to both `download_asset` AND `find_asset_url`
-      (the latter also lacks a timeout; only `fetch_latest_version` has 5s)
+- [ ] `download_asset` (L296-312) uses bare `ureq::get(url).call()` — no timeout
+      (ureq 2.x read/write default to INFINITE). Add a shared `http_agent()`
+      (`AgentBuilder` with `timeout_connect` + `timeout_read` + overall
+      `.timeout(~120s)`), thread through `download_asset` AND the un-timed
+      `find_asset_url` (L227-233); `fetch_latest_version` already has 5s.
+
+## Open decisions (need owner input)
+- **(a)** digest-absent behavior: warn-and-proceed (my lean — matches "verify when
+  available") vs hard-fail.
+- **(b)** Land the xz spike + `zip`/xz deps in THIS ticket, or split: implement
+  zip (.zip → Windows, unblocks THIS platform) + H2 + L2 + H1 now, and defer
+  `.tar.xz` (Linux/macOS) to a follow-up gated on the xz-decoder spike. Splitting
+  ships the Windows fix + all checksums/timeout immediately without blocking on
+  the xz crate evaluation.
 
 ## Acceptance criteria
 
 - [ ] `recall update` extracts the real release formats (.zip on Windows,
-      .tar.xz on Linux/macOS) — verified against an actual release asset
-- [ ] Update verifies `assets[].digest` when present, warns when absent
+      .tar.xz on Linux/macOS — or .tar.xz deferred per decision b) — verified
+      against an actual release asset
+- [ ] Update verifies `assets[].digest` when present (absent → per decision a)
 - [ ] ORT runtime download verifies a pinned SHA-256; mismatch aborts cleanly
 - [ ] Asset download + release-API calls have bounded timeouts
-- [ ] `cargo test` passes, `cargo clippy` clean
+- [ ] `cargo test` passes, `cargo clippy` clean; `cargo tree -i liblzma-sys` empty
 
 ## Validation criteria
 
 - Unit test: archive-type dispatch picks zip/tar.xz/tar.gz by name
-- Unit test: checksum mismatch → error, nothing persisted
-- Manual/integration: download the live release asset for this platform and
-  confirm extraction succeeds (guards against another format regression)
+- Unit test: `verify_digest` mismatch → error, nothing persisted; match → ok
+- Unit test: `extract_named_from_zip` round-trips a known file from an in-memory
+  store+deflate zip
+- Manual: fetch THIS platform's live release asset
+  (`recall-x86_64-pc-windows-msvc.zip`, digest `sha256:9c12b0d4…`) and confirm
+  extraction + digest verification succeed
