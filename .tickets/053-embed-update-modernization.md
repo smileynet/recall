@@ -1,7 +1,7 @@
 ---
 id: "053"
 title: "Modernize embed/update: OnceLock for ORT init, computed URLs, home-dir fallback"
-status: in_progress
+status: done
 blocked_by: []
 priority: high
 validation_criteria:
@@ -132,3 +132,11 @@ function.
 Stale PowerShell profile hook `crew-research/tools/recall/profile-hook.ps1`
 (deleted path) errors on every shell start — candidate for the 056 hygiene sweep
 (it references the pre-migration Python recall location).
+
+## Resolution (2026-08-28)
+
+OnceLock replaces unsafe static mut ORT init; ORT URL computed from ORT_VERSION via ort_platform() table (unblocks 051 checksum); recall_home() fails loudly instead of silent CWD write, propagated through ort_lib_dir/model_cache_dir/callers.
+
+### Verification
+1. ✓ cargo test + clippy clean — "cargo clippy --all-targets clean; grep 'static mut|unsafe' in embed.rs = 0 matches"
+2. ✓ no unsafe static mut in embed.rs — "cargo test: 78 lib (incl +2 ort_url tests) + 11 bin + 14 cli_errors + all suites pass; deployed recall 0.1.0, live search works"
