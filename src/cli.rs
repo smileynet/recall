@@ -831,6 +831,13 @@ fn decide(assume_yes: bool, is_tty: bool, answer: Option<&str>) -> Decision {
 }
 
 /// Read one line from stdin, lowercased and trimmed. Empty on EOF/error (→ Abort).
+///
+/// Accepted untested shim (ticket 061): this is a thin `stdin().read_line`
+/// wrapper. Its only logic — the trim/lowercase normalization and the
+/// "y"/"yes" → proceed mapping — lives in `decide`, which is unit-tested against
+/// `"  y  "`, `"YES"`, `""`, etc. Covering the `read_line` call itself would need
+/// a `BufRead`-injection generic (or a PTY); not worth it for a std I/O call whose
+/// decision logic is already covered.
 fn read_line_lower() -> String {
     let mut input = String::new();
     if std::io::stdin().read_line(&mut input).is_ok() {
