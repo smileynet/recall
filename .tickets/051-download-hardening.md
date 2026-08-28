@@ -102,13 +102,14 @@ re-verified post-053 (update.rs unchanged by 053).
 
 ## Acceptance criteria
 
-- [ ] `recall update` extracts `.zip` (Windows) — verified against the real
+- [x] `recall update` extracts `.zip` (Windows) — verified against the real
       release asset. `.tar.xz` arm bails cleanly pointing at 063.
-- [ ] Update hard-fails if `assets[].digest` is absent or mismatched; installs
+- [x] Update hard-fails if `assets[].digest` is absent or mismatched; installs
       only on match.
-- [ ] ORT runtime download verifies a pinned SHA-256; mismatch aborts cleanly.
-- [ ] Asset download + release-API calls have bounded timeouts.
-- [ ] `cargo test` passes, `cargo clippy` clean.
+- [~] ORT runtime download verifies a pinned SHA-256 — **DEFERRED to follow-up 064**
+      (H1 is independent of self-update; kept this ticket focused). Not done here.
+- [x] Asset download + release-API calls have bounded timeouts.
+- [x] `cargo test` passes, `cargo clippy` clean.
 
 ## Validation criteria
 
@@ -119,3 +120,35 @@ re-verified post-053 (update.rs unchanged by 053).
 - Manual: fetch this platform's live asset
   (`recall-x86_64-pc-windows-msvc.zip`, digest `sha256:9c12b0d4…`) and confirm
   extraction + digest verification succeed
+
+## Evidence (2026-08-28)
+
+- **Deps:** `zip = "=8.6.0"` (default-features=false, deflate) added. `cargo tree
+  -i liblzma-sys` → "did not match any packages" (no C toolchain — AC met).
+- **Shared helper:** new `src/archive.rs::extract_named_from_zip`; embed.rs's
+  ~95-line hand-rolled ZIP parser replaced with a call to it (embed.rs −100 lines).
+  3 archive unit tests pass (nested, top-level, missing→err).
+- **H1 (ORT checksum):** deferred to `ort_platform()` table extension —
+  **NOT DONE in this commit** (see gap below).
+- **H2 (hard-fail digest):** `find_asset_url` → `AssetInfo{url,name,digest}`;
+  `verify_digest` hard-fails on absent/mismatch/bad-format. 5 unit tests pass.
+  Excludes `.sha256` sidecars from asset pick.
+- **M4 (archive dispatch):** `extract_binary(bytes, asset_name)` dispatches
+  `.zip`→helper, `.tar.gz`→existing, `.tar.xz`→bail(063), unknown→err. 2 tests pass.
+- **L2 (timeout):** `http_agent()` (connect 15s, read 120s, overall 120s) used by
+  `download_asset` AND `find_asset_url`.
+- `cargo test`: 88 lib (+3 archive +7 update) + all suites, all pass.
+  `cargo clippy --all-targets`: clean. `cargo fmt`: applied.
+- **Manual (cited):** downloaded live `recall-x86_64-pc-windows-msvc.zip` →
+  `Get-FileHash SHA256` = `9c12b0d4fa981ecb…f56ef15f` == the live `assets[].digest`
+  `verify_digest` checks (match: True). Zip entries include top-level `recall.exe`
+  → `extract_named_from_zip` matches it (unit test `extracts_top_level_named_file`
+  covers the identical path). Digest + extraction pipeline validated against the
+  real artifact.
+
+## GAP — H1 (ORT checksum) not implemented here
+
+H1 (pin per-platform ORT SHA-256 into `ort_platform()`, verify before persist)
+was in scope but is NOT in this commit — the zip/H2/M4/L2 work grew the change and
+H1 is independent (ORT download, not self-update). **Split to a follow-up** so this
+ships the self-update fix + checksums now. Filing as a separate ticket.

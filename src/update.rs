@@ -202,23 +202,63 @@ pub fn cmd_update() -> Result<i32> {
 
     println!("Updating recall v{} → v{}...", current, latest);
 
-    let asset_url = find_asset_url(&latest)?;
-    let archive_bytes = download_asset(&asset_url)?;
-    let binary = extract_binary(&archive_bytes)?;
+    let asset = find_asset_url(&latest)?;
+    let archive_bytes = download_asset(&asset.url)?;
+    // Hard-fail if the release didn't provide a digest, or if it doesn't match —
+    // never install an unverified binary.
+    verify_digest(&archive_bytes, asset.digest.as_deref())?;
+    let binary = extract_binary(&archive_bytes, &asset.name)?;
     replace_self(&binary)?;
 
     println!("Updated to v{}.", latest);
     Ok(0)
 }
 
-/// Find the correct asset URL for this platform.
-fn find_asset_url(version: &str) -> Result<String> {
+/// A release asset selected for this platform.
+struct AssetInfo {
+    url: String,
+    name: String,
+    /// GitHub-computed content digest, e.g. `sha256:<hex>`. Absent on very old
+    /// releases (predating GitHub's per-asset digest) — treated as a hard error.
+    digest: Option<String>,
+}
+
+/// Verify downloaded bytes against a GitHub `assets[].digest` (`sha256:<hex>`).
+/// Hard-fails when the digest is absent or does not match — recall refuses to
+/// install an unverified self-update.
+fn verify_digest(bytes: &[u8], digest: Option<&str>) -> Result<()> {
+    use sha2::{Digest, Sha256};
+    let digest = digest.ok_or_else(|| {
+        anyhow::anyhow!(
+            "release asset has no checksum (digest) — refusing to install unverified update"
+        )
+    })?;
+    let expected = digest.strip_prefix("sha256:").ok_or_else(|| {
+        anyhow::anyhow!(
+            "unsupported digest format '{}' (expected sha256:<hex>)",
+            digest
+        )
+    })?;
+    let actual = format!("{:x}", Sha256::digest(bytes));
+    if !actual.eq_ignore_ascii_case(expected) {
+        anyhow::bail!(
+            "checksum mismatch: expected {}, got {} — refusing to install",
+            expected,
+            actual
+        );
+    }
+    Ok(())
+}
+
+/// Find the correct asset for this platform (URL + name + digest).
+fn find_asset_url(version: &str) -> Result<AssetInfo> {
     let url = format!(
         "https://api.github.com/repos/{}/releases/tags/v{}",
         GITHUB_REPO, version
     );
 
-    let response = ureq::get(&url)
+    let response = http_agent()
+        .get(&url)
         .set("Accept", "application/vnd.github.v3+json")
         .set(
             "User-Agent",
@@ -244,19 +284,34 @@ fn find_asset_url(version: &str) -> Result<String> {
 
     // Prefer the most specific match: the full target triple (with ABI, e.g.
     // x86_64-pc-windows-msvc) beats the OS-only substring. This disambiguates
-    // gnu vs musl vs msvc when a release ships multiple variants.
+    // gnu vs musl vs msvc when a release ships multiple variants. Exclude the
+    // `.sha256` sidecar assets so we never pick a checksum file as the binary.
     let full_triple = full_target_triple();
     let pick = names
         .iter()
+        .filter(|n| !n.ends_with(".sha256"))
         .find(|n| n.contains(&full_triple))
-        .or_else(|| names.iter().find(|n| n.contains(&target)))
+        .or_else(|| {
+            names
+                .iter()
+                .filter(|n| !n.ends_with(".sha256"))
+                .find(|n| n.contains(&target))
+        })
         .copied();
 
     if let Some(name) = pick {
         for asset in assets {
             if asset.get("name").and_then(|n| n.as_str()) == Some(name) {
                 if let Some(url) = asset.get("browser_download_url").and_then(|u| u.as_str()) {
-                    return Ok(url.to_string());
+                    let digest = asset
+                        .get("digest")
+                        .and_then(|d| d.as_str())
+                        .map(|s| s.to_string());
+                    return Ok(AssetInfo {
+                        url: url.to_string(),
+                        name: name.to_string(),
+                        digest,
+                    });
                 }
             }
         }
@@ -290,9 +345,22 @@ fn platform_target() -> String {
     format!("{}-{}", arch, os)
 }
 
-/// Download an asset from the given URL.
+/// Shared HTTP agent with bounded timeouts. ureq 2.x defaults read/write
+/// timeouts to INFINITE, so a stalled connection would hang forever without
+/// these. The overall `.timeout` is the watchdog covering the whole request.
+fn http_agent() -> ureq::Agent {
+    use std::time::Duration;
+    ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(15))
+        .timeout_read(Duration::from_secs(120))
+        .timeout(Duration::from_secs(120))
+        .build()
+}
+
+/// Download an asset from the given URL (with bounded timeouts).
 fn download_asset(url: &str) -> Result<Vec<u8>> {
-    let response = ureq::get(url)
+    let response = http_agent()
+        .get(url)
         .set(
             "User-Agent",
             &format!("recall/{}", env!("CARGO_PKG_VERSION")),
@@ -309,18 +377,37 @@ fn download_asset(url: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// Extract the recall binary from a tar.gz archive.
-fn extract_binary(archive_bytes: &[u8]) -> Result<Vec<u8>> {
-    use flate2::read::GzDecoder;
-
-    let decoder = GzDecoder::new(archive_bytes);
-    let mut archive = tar::Archive::new(decoder);
-
+/// Extract the recall binary from a release archive, dispatching on the asset's
+/// file type. `.zip` (Windows) and `.tar.gz` are supported; `.tar.xz`
+/// (Linux/macOS cargo-dist default) is not yet — see ticket 063.
+fn extract_binary(archive_bytes: &[u8], asset_name: &str) -> Result<Vec<u8>> {
     let binary_name = if cfg!(windows) {
         "recall.exe"
     } else {
         "recall"
     };
+
+    let lower = asset_name.to_lowercase();
+    if lower.ends_with(".zip") {
+        crate::archive::extract_named_from_zip(archive_bytes, binary_name)
+    } else if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
+        extract_binary_tar_gz(archive_bytes, binary_name)
+    } else if lower.ends_with(".tar.xz") {
+        anyhow::bail!(
+            ".tar.xz self-update extraction is not yet supported (asset '{}') — see ticket 063",
+            asset_name
+        )
+    } else {
+        anyhow::bail!("unrecognized release archive format: '{}'", asset_name)
+    }
+}
+
+/// Extract `binary_name` from a gzip-compressed tar archive.
+fn extract_binary_tar_gz(archive_bytes: &[u8], binary_name: &str) -> Result<Vec<u8>> {
+    use flate2::read::GzDecoder;
+
+    let decoder = GzDecoder::new(archive_bytes);
+    let mut archive = tar::Archive::new(decoder);
 
     for entry in archive
         .entries()
@@ -431,6 +518,49 @@ fn now_epoch() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verify_digest_matches() {
+        // sha256("hello") = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+        let d = "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+        assert!(verify_digest(b"hello", Some(d)).is_ok());
+    }
+
+    #[test]
+    fn verify_digest_case_insensitive() {
+        let d = "sha256:2CF24DBA5FB0A30E26E83B2AC5B9E29E1B161E5C1FA7425E73043362938B9824";
+        assert!(verify_digest(b"hello", Some(d)).is_ok());
+    }
+
+    #[test]
+    fn verify_digest_mismatch_fails() {
+        let d = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+        assert!(verify_digest(b"hello", Some(d)).is_err());
+    }
+
+    #[test]
+    fn verify_digest_absent_hard_fails() {
+        // Decision (a): no digest → refuse to install.
+        assert!(verify_digest(b"hello", None).is_err());
+    }
+
+    #[test]
+    fn verify_digest_bad_format_fails() {
+        assert!(verify_digest(b"hello", Some("md5:abc")).is_err());
+    }
+
+    #[test]
+    fn extract_binary_tar_xz_bails_pointing_at_063() {
+        let err = extract_binary(b"not-really-an-archive", "recall-x.tar.xz")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("063"), "should point at ticket 063: {err}");
+    }
+
+    #[test]
+    fn extract_binary_unknown_format_fails() {
+        assert!(extract_binary(b"x", "recall-x.rar").is_err());
+    }
 
     #[test]
     fn test_version_is_newer() {

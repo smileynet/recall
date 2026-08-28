@@ -1,3 +1,4 @@
+pub mod archive;
 pub mod embed;
 pub mod guard;
 pub mod ingest;
