@@ -148,6 +148,21 @@ pub struct TelemetryEvent {
     pub date: String,
 }
 
+/// Derive the stored `error_type` from an error's Display string: redact
+/// absolute paths first (so a leaked path can't survive in the first
+/// colon-delimited segment — a Windows path's drive-letter colon would
+/// otherwise split mid-path), then keep the segment before the first colon.
+/// See ticket 069.
+fn derive_error_type(display: &str) -> String {
+    let redacted = redact_paths(display);
+    redacted
+        .split(':')
+        .next()
+        .unwrap_or("unknown")
+        .trim()
+        .to_string()
+}
+
 pub fn record_event(command: &str, start: Instant, exit_code: i32, error: Option<&anyhow::Error>) {
     if !is_enabled() {
         return;
@@ -160,13 +175,7 @@ pub fn record_event(command: &str, start: Instant, exit_code: i32, error: Option
         arch: std::env::consts::ARCH.to_string(),
         duration_ms: start.elapsed().as_millis() as u64,
         exit_code,
-        error_type: error.map(|e| {
-            format!("{}", e)
-                .split(':')
-                .next()
-                .unwrap_or("unknown")
-                .to_string()
-        }),
+        error_type: error.map(|e| derive_error_type(&format!("{}", e))),
         date: today_date(),
     };
 
@@ -571,6 +580,33 @@ mod tests {
         let input = "index out of bounds: 5 >= 3";
         let output = redact_paths(input);
         assert_eq!(output, input);
+    }
+
+    #[test]
+    fn test_derive_error_type_redacts_windows_path() {
+        // An error embedding a Windows path must not leak the username/path
+        // into the stored error_type. (ticket 069)
+        let e = "Load model from C:\\Users\\john\\.recall\\models failed";
+        let out = derive_error_type(e);
+        assert!(!out.contains("john"), "leaked username: {out}");
+        assert!(!out.contains("C:\\"), "leaked drive path: {out}");
+    }
+
+    #[test]
+    fn test_derive_error_type_redacts_unix_path() {
+        let e = "cannot open /home/alice/.recall/db.sqlite3";
+        let out = derive_error_type(e);
+        assert!(!out.contains("alice"), "leaked username: {out}");
+        assert!(!out.contains("/home/"), "leaked home path: {out}");
+    }
+
+    #[test]
+    fn test_derive_error_type_plain_message_first_segment() {
+        // No path: keep the segment before the first colon, trimmed.
+        assert_eq!(
+            derive_error_type("failed to acquire process lock: os error 33"),
+            "failed to acquire process lock"
+        );
     }
 
     #[test]

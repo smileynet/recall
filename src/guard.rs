@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use fs2::FileExt;
 
 use crate::recall_log;
@@ -42,15 +42,25 @@ impl ProcessGuard {
     pub fn try_acquire() -> Result<Option<Self>> {
         let lock_path = lock_path()?;
         std::fs::create_dir_all(lock_path.parent().unwrap())?;
-        let file = std::fs::File::create(&lock_path)
-            .with_context(|| format!("failed to create lock file: {}", lock_path.display()))?;
+
+        // Opening the lockfile can itself fail with a sharing/lock violation on
+        // Windows (ERROR_SHARING_VIOLATION 32) when antivirus, a search indexer,
+        // or a still-closing sibling process momentarily holds a handle to it.
+        // That is operationally identical to "another instance is active" — skip
+        // gracefully and retry next tick rather than surfacing a hard error.
+        let file = match std::fs::File::create(&lock_path) {
+            Ok(f) => f,
+            Err(e) if is_benign_contention(&e) => return Ok(None),
+            Err(e) => {
+                return Err(anyhow::Error::from(e)
+                    .context(format!("failed to create lock file: {}", lock_path.display())))
+            }
+        };
 
         match file.try_lock_exclusive() {
             Ok(()) => {}
             // Lock is held by another instance → caller should skip gracefully.
-            // fs2 reports this as WouldBlock on Unix; on Windows the raw OS error
-            // is ERROR_LOCK_VIOLATION (33), which maps to an uncategorized kind.
-            Err(e) if is_lock_contended(&e) => return Ok(None),
+            Err(e) if is_benign_contention(&e) => return Ok(None),
             Err(e) => return Err(anyhow::Error::from(e).context("failed to acquire process lock")),
         }
 
@@ -63,11 +73,21 @@ impl ProcessGuard {
     }
 }
 
-/// Returns true if the error indicates the lock is held by another process
-/// (as opposed to a real I/O failure). Unix reports `WouldBlock`; Windows
-/// reports `ERROR_SHARING_VIOLATION` (32) or `ERROR_LOCK_VIOLATION` (33).
-fn is_lock_contended(e: &std::io::Error) -> bool {
-    if e.kind() == std::io::ErrorKind::WouldBlock {
+/// Returns true if an I/O error means the lock is effectively held by another
+/// process (or a transient handle-holder) rather than a real I/O failure — the
+/// caller should skip gracefully.
+///
+/// Covers three cases:
+/// - `WouldBlock`: `flock(LOCK_NB)` contention on Unix (and std `File::try_lock`).
+/// - Windows raw OS `ERROR_SHARING_VIOLATION` (32) / `ERROR_LOCK_VIOLATION` (33):
+///   fs2's `try_lock_exclusive` surfaces 33 on contention; opening the lockfile
+///   can surface 32 when another handle is momentarily open. These decode to an
+///   uncategorized `ErrorKind`, so we must match the raw OS code.
+/// - `PermissionDenied`: a transient exclusive-open denial on the lockfile,
+///   treated as contention rather than a hard failure.
+fn is_benign_contention(e: &std::io::Error) -> bool {
+    use std::io::ErrorKind;
+    if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::PermissionDenied) {
         return true;
     }
     matches!(e.raw_os_error(), Some(32) | Some(33))
@@ -218,5 +238,65 @@ mod tests {
         // A huge count must clamp to the ceiling, not overflow.
         assert_eq!(scaled_timeout(usize::MAX), SCALED_CEILING);
         assert_eq!(scaled_timeout(10_000_000), SCALED_CEILING);
+    }
+
+    #[test]
+    fn benign_contention_wouldblock() {
+        let e = std::io::Error::from(std::io::ErrorKind::WouldBlock);
+        assert!(is_benign_contention(&e));
+    }
+
+    #[test]
+    fn benign_contention_permission_denied() {
+        // Transient exclusive-open denial on the lockfile → treat as contention.
+        let e = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert!(is_benign_contention(&e));
+    }
+
+    #[test]
+    fn benign_contention_windows_sharing_and_lock_violation() {
+        // ERROR_SHARING_VIOLATION (32) at lockfile open, ERROR_LOCK_VIOLATION (33)
+        // from fs2 try_lock — both are contention, regardless of platform decoding.
+        assert!(is_benign_contention(&std::io::Error::from_raw_os_error(32)));
+        assert!(is_benign_contention(&std::io::Error::from_raw_os_error(33)));
+    }
+
+    #[test]
+    fn benign_contention_rejects_real_io_errors() {
+        // Genuine failures must still propagate as Err (not a graceful skip).
+        assert!(!is_benign_contention(&std::io::Error::from(
+            std::io::ErrorKind::NotFound
+        )));
+        // ERROR_DISK_FULL (112) is a real failure, not contention.
+        assert!(!is_benign_contention(&std::io::Error::from_raw_os_error(112)));
+    }
+
+    #[test]
+    fn try_acquire_second_instance_skips_gracefully() {
+        // Holding the lock, a second try_acquire must return Ok(None) (skip),
+        // not Err — the contended path. Uses an isolated RECALL_DB so the lock
+        // path is unique to this test.
+        let tmp = std::env::temp_dir().join(format!("recall-guard-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let db = tmp.join("recall.sqlite3");
+        // SAFETY: single-threaded test; sets a process-global for the lock path.
+        unsafe {
+            std::env::set_var("RECALL_DB", &db);
+        }
+
+        let first = ProcessGuard::try_acquire().expect("first acquire ok");
+        assert!(first.is_some(), "first acquire should hold the lock");
+
+        let second = ProcessGuard::try_acquire().expect("second acquire must not error");
+        assert!(
+            second.is_none(),
+            "second acquire should skip gracefully (Ok(None)), got a guard"
+        );
+
+        drop(first);
+        unsafe {
+            std::env::remove_var("RECALL_DB");
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
