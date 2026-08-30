@@ -1,7 +1,7 @@
 ---
 id: "066"
 title: "guard: treat lockfile-open sharing violations as graceful skip (fix 62 false import errors)"
-status: open
+status: in_progress
 blocked_by: []
 priority: high
 validation_criteria:
