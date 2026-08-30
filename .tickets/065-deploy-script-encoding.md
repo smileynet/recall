@@ -1,7 +1,7 @@
 ---
 id: "065"
 title: "deploy-local.ps1 fails under Windows PowerShell 5.1 (non-ASCII em-dash, no BOM)"
-status: in_progress
+status: done
 blocked_by: []
 priority: high
 validation_criteria:
@@ -37,11 +37,19 @@ on the default `powershell` shell hits this.
 
 ## Acceptance criteria
 
-- [ ] `scripts/deploy-local.ps1` contains no bytes above 0x7F
-- [ ] Script parses cleanly under Windows PowerShell 5.1 (`powershell -NoProfile`)
-- [ ] Script still parses/runs under PowerShell 7 (`pwsh`)
+- [x] `scripts/deploy-local.ps1` contains no bytes above 0x7F
+- [x] Script parses cleanly under Windows PowerShell 5.1 (`powershell -NoProfile`)
+- [x] Script still parses/runs under PowerShell 7 (`pwsh`)
 
 ## Validation criteria
 
 - Byte scan: no byte > 0x7F in the file
 - `powershell -NoProfile -Command "[ScriptBlock]::Create((Get-Content -Raw scripts/deploy-local.ps1))"` → no ParserError
+
+## Resolution (2026-08-30)
+
+Made deploy-local.ps1 pure ASCII by replacing em-dashes (lines 2,30,46,50,67) with hyphens. Windows PowerShell 5.1 decodes BOM-less files as ANSI and mangled the em-dashes; ASCII parses under both 5.1 and pwsh 7. Diff is only the 5 substitutions, LF preserved.
+
+### Verification
+1. ✓ scripts/deploy-local.ps1 contains no bytes > 0x7F (pure ASCII) — "Byte scan via pwsh ReadAllBytes: 'bytes>0x7F: 0' — file is pure ASCII after replacing 5 U+2014 with hyphens"
+2. ✓ powershell -NoProfile -File scripts/deploy-local.ps1 parses without ParserError — "Parse check on both interpreters: 'PARSE OK on PS 5.1.26100.9278' and 'PARSE OK on PS 7.6.5' via [ScriptBlock]::Create(Get-Content -Raw); no ParserError"
