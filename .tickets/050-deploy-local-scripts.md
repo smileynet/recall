@@ -290,4 +290,13 @@ echo -e "\nDone."
 
 ## Resolution (2026-08-25)
 
-TBD
+Both scripts shipped: `scripts/deploy-local.ps1` (Windows) and
+`scripts/deploy-local.sh` (macOS/Linux). Each gates on `cargo test --lib`, builds
+with `--locked`, backs up the previous binary, deploys, verifies `--version`, runs a
+health check, and reports scheduled-task status (rolling back on verification
+failure). Windows handles a running process via wait-or-rename-swap (`-Force`); Unix
+uses atomic `mv`. AGENTS.md Deployment section references the scripts.
+
+Follow-up: the `.ps1` shipped with U+2014 em-dashes in string literals, which broke
+parsing under Windows PowerShell 5.1 (BOM-less files decoded as ANSI). Fixed in
+ticket 065 (2026-08-30) by converting to ASCII hyphens.

@@ -112,3 +112,4 @@ Note: `cargo install --path .` is broken (ticket #049, ort dependency). Use the 
 - Same CLI interface as Python recall (commands, flags, output format)
 - No daemon / no server — single binary, OS scheduler for background tasks
 - No network dependencies at runtime (model cached locally after first download)
+- Keep helper `.ps1` scripts ASCII-only (no em-dashes/smart quotes). Windows PowerShell 5.1 decodes BOM-less files with the ANSI codepage and mangles non-ASCII bytes into a parse error; `pwsh` 7 defaults to UTF-8 so the bug is invisible there. ASCII works under both. (ticket 065)

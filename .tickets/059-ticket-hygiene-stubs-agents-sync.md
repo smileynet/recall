@@ -14,7 +14,7 @@ TBD
 
 ## Acceptance criteria
 
-- [ ] TBD
+- [x] N/A — consolidated into 056 (see Resolution); no independent work tracked here
 
 ## Resolution (2026-08-28)
 

@@ -18,3 +18,6 @@ Thumbs.db
 # Model cache (downloaded at runtime)
 /models/
 .fastembed_cache/
+
+# Local runtime data (DB + model cache when RECALL_DB points into the repo)
+/.data/
