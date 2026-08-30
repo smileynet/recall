@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# deploy-local.ps1 — Build and deploy recall locally (Windows)
+# deploy-local.ps1 - Build and deploy recall locally (Windows)
 #
 # Usage: .\scripts\deploy-local.ps1 [-SkipTests] [-Force]
 #   -SkipTests  Skip cargo test before deploy
@@ -27,7 +27,7 @@ if (-not $SkipTests) {
     Push-Location $RepoRoot
     try {
         cargo test --lib
-        if ($LASTEXITCODE -ne 0) { throw "Tests failed — aborting deploy" }
+        if ($LASTEXITCODE -ne 0) { throw "Tests failed - aborting deploy" }
     } finally { Pop-Location }
 }
 
@@ -43,11 +43,11 @@ try {
 $proc = Get-Process -Name "recall" -ErrorAction SilentlyContinue
 if ($proc) {
     if ($Force) {
-        Write-Host "`nrecall is running — using rename-swap" -ForegroundColor Yellow
+        Write-Host "`nrecall is running - using rename-swap" -ForegroundColor Yellow
         Remove-Item "$Target.old" -ErrorAction SilentlyContinue
         Rename-Item $Target "$Target.old"
     } else {
-        Write-Host "`nrecall is running — waiting up to 120s..." -ForegroundColor Yellow
+        Write-Host "`nrecall is running - waiting up to 120s..." -ForegroundColor Yellow
         $proc | Wait-Process -Timeout 120 -ErrorAction Stop
     }
 }
@@ -64,7 +64,7 @@ Copy-Item "$RepoRoot\target\release\recall.exe" -Destination $Target -Force
 # 6. Verify
 $version = & $Target --version
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: Verification failed — rolling back" -ForegroundColor Red
+    Write-Host "ERROR: Verification failed - rolling back" -ForegroundColor Red
     if (Test-Path $Backup) { Copy-Item $Backup $Target -Force }
     exit 1
 }
