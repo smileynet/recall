@@ -152,6 +152,8 @@ Supported models: `bge-base` (768-dim, default), `bge-small` (384-dim, faster). 
 └──────────────────────────────────────────────────────┘
 ```
 
+Scheduled runs use `recall sync` (ingest + import-all in one process) — on Windows a `RecallIngest` task every 6 hours. This refreshes both session transcripts and project `.memory/` knowledge in a single lock-holding run.
+
 ## Performance
 
 | Operation | Time |

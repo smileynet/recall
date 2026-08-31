@@ -85,7 +85,7 @@ recall --version                                   # version info
 ## Deployment
 
 - Binary: `~/.cargo/bin/recall.exe` (v0.1.0)
-- Scheduled task: `RecallIngest` (every 30 min, direct binary)
+- Scheduled task: `RecallIngest` runs `recall sync` every 6h (`IgnoreNew`, ExecutionTimeLimit `PT3H` — above the 2h app-guard ceiling so recall's own watchdog fires first)
 - Corpus: ~44K chunks, 69 wings, 47/47 project coverage
 - Model: BGE-base-en-v1.5 (~416MB cached ONNX)
 - ONNX Runtime: load-dynamic (`~/.recall/lib/onnxruntime.dll`)

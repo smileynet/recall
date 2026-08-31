@@ -17,6 +17,13 @@ estimate: 30min
 
 ## New scheduled task
 
+> **Superseded (2026-08-31, ticket 067):** the task originally shipped as shown below
+> (`ingest`, 30-min interval, 1h limit). It has since been updated to run **`recall sync`**
+> (ingest + import-all) every **6 hours** (`PT6H`, duration 999 days), with
+> **`ExecutionTimeLimit PT3H`** (raised above the 2h app-guard ceiling so recall's own
+> watchdog self-terminates before the scheduler hard-kills). `MultipleInstances IgnoreNew`
+> is unchanged. The snippet below is the historical original.
+
 ```powershell
 $RecallExe = "$env:USERPROFILE\.cargo\bin\recall.exe"
 $Action = New-ScheduledTaskAction -Execute $RecallExe -Argument "ingest"
