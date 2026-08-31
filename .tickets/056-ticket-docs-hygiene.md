@@ -1,7 +1,7 @@
 ---
 id: "056"
 title: "Hygiene: delete duplicate 40/41/42 stubs, sync AGENTS.md modules/commands"
-status: in_progress
+status: done
 blocked_by: []
 priority: high
 validation_criteria:
@@ -43,11 +43,19 @@ Workspace layout is missing modules that exist on disk:
 
 ## Acceptance criteria
 
-- [ ] No duplicate ticket IDs (`tkt doctor` clean)
-- [ ] AGENTS.md workspace layout lists all `src/*.rs` modules
-- [ ] AGENTS.md recall CLI section lists all subcommands
+- [x] No duplicate ticket IDs (`tkt doctor` clean)
+- [x] AGENTS.md workspace layout lists all `src/*.rs` modules
+- [x] AGENTS.md recall CLI section lists all subcommands
 
 ## Validation criteria
 
 - `tkt doctor` reports no duplicate/unparseable tickets
 - Diff `src/*.rs` against the AGENTS.md layout → no missing module
+
+## Resolution (2026-08-31)
+
+Deleted 3 duplicate unpadded ticket stubs (40/41/42-*.md), keeping canonical padded 0NN versions. Synced AGENTS.md: added guard/archive/logging/telemetry/update to workspace layout; added sync/telemetry/update CLI commands + forget --yes flag + migrate --force; de-numericized the ticket-count line. #36 left done (Resolution documents decomposition into 043-047; unchecked ACs are correct since work moved, not done inline).
+
+### Verification
+1. ✓ no duplicate ticket IDs — "tkt doctor clean (72 tickets, no validation issues); deleted 40/41/42-*.md stubs via git rm; unpadded 40/41/42 absent from tkt ready output"
+2. ✓ AGENTS.md lists all modules and commands — "AGENTS.md cross-check passed: all src/*.rs present (added guard/archive/logging/telemetry/update) and all 13 CLI subcommands present (added sync/telemetry/update, forget --yes)"
