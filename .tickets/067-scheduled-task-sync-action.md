@@ -1,7 +1,7 @@
 ---
 id: "067"
 title: "RecallIngest task: raise ExecutionTimeLimit above app-guard ceiling + fix stale docs"
-status: in_progress
+status: done
 blocked_by: []
 priority: high
 validation_criteria:
@@ -92,12 +92,21 @@ Interval (6h) already exceeds worst-case runtime (~68 min) with wide headroom, a
 
 ## Acceptance criteria
 
-- [ ] ExecutionTimeLimit >= PT3H, verified live
-- [ ] Docs (AGENTS.md, README, ticket 12) match live action/interval/limit
-- [ ] app-guard-before-scheduler ordering documented
+- [x] ExecutionTimeLimit >= PT3H, verified live
+- [x] Docs (AGENTS.md, README, ticket 12) match live action/interval/limit
+- [x] app-guard-before-scheduler ordering documented
 
 ## Risk
 
 Low, reversible. Only lengthens the pre-kill window; the 90-min app guard still bounds
 runaway runs. Modifies a live OS task -> apply with user approval, revert via
 `$task.Settings.ExecutionTimeLimit = "PT30M"`.
+
+## Resolution (2026-08-31)
+
+Live audit corrected the plan: task already ran sync (not ingest). Only fix needed was raising ExecutionTimeLimit PT30M->PT3H so recall's own 90-min watchdog (exit 2) fires before the scheduler's hard TerminateProcess (r4: console apps get no graceful WM_CLOSE). Write path confirmed crash-safe (WAL + per-file txns; hard kill = lost work only). Fixed doc mismatches in AGENTS.md, README, ticket 12.
+
+### Verification
+1. ✓ RecallIngest ExecutionTimeLimit is >= PT3H (strictly greater than the app guard's 2h SCALED_CEILING) so recall's own watchdog (exit 2) fires before the scheduler hard-kills — "Get-ScheduledTask shows ExecutionTimeLimit PT3H (was PT30M), strictly above the 2h SCALED_CEILING; ordering is 90min sync watchdog < 2h app ceiling < 3h scheduler < 6h interval"
+2. ✓ AGENTS.md, README, and ticket 12 describe the task's actual action (sync), interval (6h), and limit — "AGENTS.md now says 'runs recall sync every 6h, PT3H, IgnoreNew'; README notes scheduled runs use sync every 6h; ticket 12 has a dated Superseded note; verified action=sync/interval=PT6H/IgnoreNew unchanged"
+3. ✓ The change is applied with Set-ScheduledTask and re-verified via Get-ScheduledTask — "Set-ScheduledTask applied and re-verified: before=PT30M after=PT3H; action recall.exe sync, PT6H, P999D, IgnoreNew, State Ready all intact"
