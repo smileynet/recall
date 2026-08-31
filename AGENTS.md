@@ -19,6 +19,11 @@ src/
 ├── search.rs         — hybrid search (BM25 + vector RRF fusion)
 ├── scan.rs           — stat-based file change detection (jwalk)
 ├── migrate.rs        — Python DB migration (direct embedding copy)
+├── guard.rs          — process lock (single-instance) + scaled execution timeout
+├── archive.rs        — archive (zip/tar) extraction for model + runtime downloads
+├── logging.rs        — timestamped file logging + active-session detection
+├── telemetry.rs      — opt-in local telemetry + crash reporting (path redaction)
+├── update.rs         — self-update (version check, download, digest verify)
 ├── bin/
 │   ├── bench_models.rs   — model comparison benchmark
 │   └── bench_quality.rs  — search quality comparison
@@ -32,7 +37,7 @@ tests/
 ├── cli_snapshot.rs       — insta-cmd output snapshots
 ├── fixtures/             — JSONL fixtures (v2, v3, codex), memory/ sample
 .memory/CONTEXT.md    — project glossary + environment + gotchas
-.tickets/             — work tracking (23 tickets, 19 done)
+.tickets/             — work tracking (see `tkt status`)
 ```
 
 ## Commands
@@ -58,8 +63,11 @@ recall import-all [--force]                        # import all .memory/ from D:
 recall prime [--wing W]                            # session start payload
 recall status                                      # corpus overview
 recall health [--json]                             # diagnostics (doctor.sh compatible)
-recall forget --wing W [--older-than 90d]          # delete a wing
-recall migrate --from <path> [--embed]             # migrate Python DB
+recall forget --wing W [--older-than 90d] [--yes]  # delete a wing (--yes for non-interactive)
+recall migrate --from <path> [--embed] [--force]   # migrate Python DB
+recall sync [--force] [--skip-import|--skip-ingest] # ingest + import-all in one process
+recall telemetry <status|enable|disable>           # manage local telemetry + crash reporting
+recall update                                      # check for and install updates
 recall --version                                   # version info
 ```
 
