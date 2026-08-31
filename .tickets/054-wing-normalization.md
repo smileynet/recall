@@ -29,6 +29,25 @@ path but `sciphoenix` via another (the import path strips the dot). Session
 ingest and import can disagree, splitting one project across two wings. Also no
 `to_lowercase()` anywhere, so case differences fragment further.
 
+## Live evidence (2026-08-30 deploy health check)
+
+`recall health` on the production corpus reports **33 duplicate wing pairs** —
+the same project split across hyphen and underscore variants. This confirms the
+code-review diagnosis is causing real corpus fragmentation, not just a
+theoretical risk. Sample pairs:
+
+- `sci-phoenix` / `sci_phoenix`
+- `crew-research` / `crew_research`
+- `gdquest-vault` / `gdquest_vault`
+- `torrent-stack` / `torrent_stack`
+- `shadowrun-sega` / `shadowrun_sega`
+- (+28 more; full list in the deploy health output)
+
+Every pair is a search/prime blind spot: a query scoped to one variant misses
+memories filed under the other. This makes the migration decision below
+(re-ingest vs. leave historical) higher-priority — the corpus already has ~33
+fragmented projects.
+
 ## What to build
 
 - [ ] Add a single `normalize_wing(name: &str) -> String` (in store.rs or a util
