@@ -1,7 +1,7 @@
 ---
 id: "056"
 title: "Hygiene: delete duplicate 40/41/42 stubs, sync AGENTS.md modules/commands"
-status: open
+status: in_progress
 blocked_by: []
 priority: high
 validation_criteria:
