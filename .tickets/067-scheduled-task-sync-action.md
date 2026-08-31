@@ -1,7 +1,7 @@
 ---
 id: "067"
 title: "RecallIngest task: raise ExecutionTimeLimit above app-guard ceiling + fix stale docs"
-status: open
+status: in_progress
 blocked_by: []
 priority: high
 validation_criteria:
