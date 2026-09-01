@@ -37,7 +37,7 @@ recall search "what did we decide about authentication"
 #       > We decided to use JWT tokens with 15-minute expiry...
 
 # Import project knowledge
-recall import .memory/ --wing my-project
+recall import .memory/ --wing my_project
 #   Done: 12 new (87 chunks indexed)
 
 # Agent writes back during a session
@@ -45,7 +45,7 @@ recall add "chose Rust for the rebuild — fastembed-rs gives native embeddings"
 #   Stored in my_project/general (type: decision)
 
 # Session start payload
-recall prime --wing my-project
+recall prime --wing my_project
 #   ## Recall - Cross-Session Memory
 #   ## Recent Memories (my_project)
 #   - [decision] chose Rust for the rebuild...
@@ -91,6 +91,11 @@ recall add "Never use approach Z" --type lesson
 recall add "User prefers dark mode" --type preference
 # Wing auto-detects from cwd. Types: decision | fact | lesson | preference
 ```
+
+Wing names are normalized so hyphen, dot, space, and case variants map to one
+canonical wing (lowercase, `-`/`.`/space → `_`, repeated separators collapsed).
+`--wing my-project`, `--wing my.project`, and `--wing My_Project` all resolve to
+`my_project`, so a query always finds what was stored regardless of separator.
 
 ### Ingest sessions
 

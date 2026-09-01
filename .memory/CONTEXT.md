@@ -10,7 +10,7 @@ A single stored memory record — one chunk of content with its embedding, wing,
 _Avoid_: document (too big), row (implementation term)
 
 **Wing**:
-A project-scoped namespace in the database. Auto-derived from session cwd or explicit `--wing` flag. Enables scoped search.
+A project-scoped namespace in the database. Auto-derived from session cwd or explicit `--wing` flag, then normalized (lowercase; `-`/`.`/space → `_`; runs collapsed; empty → `global`) so separator/case variants of one project resolve to a single wing. Enables scoped search.
 _Avoid_: project (overloaded), namespace (too generic)
 
 **Room**:
