@@ -1,7 +1,7 @@
 ---
 id: "054"
 title: "Unify wing normalization (3 divergent schemes)"
-status: open
+status: in_progress
 blocked_by: []
 priority: medium
 validation_criteria:
