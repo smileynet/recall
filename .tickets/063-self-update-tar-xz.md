@@ -1,7 +1,7 @@
 ---
 id: "063"
 title: "Self-update: extract .tar.xz (Linux/macOS) — needs pure-Rust xz spike"
-status: open
+status: in_progress
 blocked_by: ["051"]
 priority: high
 validation_criteria:
