@@ -1,7 +1,7 @@
 ---
 id: "054"
 title: "Unify wing normalization (3 divergent schemes)"
-status: in_progress
+status: done
 blocked_by: []
 priority: medium
 validation_criteria:
@@ -188,11 +188,19 @@ Research/review artifacts: `.scratch/research/{slug-normalization,migration-patt
 
 ## Acceptance criteria
 
-- [ ] One `normalize_wing` function; no ad-hoc `.replace('-', "_")` chains remain
-- [ ] Session ingest and import produce identical wings for the same project dir
-- [ ] `cargo test` passes with normalization unit tests
+- [x] One `normalize_wing` function; no ad-hoc `.replace('-', "_")` chains remain
+- [x] Session ingest and import produce identical wings for the same project dir
+- [x] `cargo test` passes with normalization unit tests
 
 ## Validation criteria
 
 - Unit test: `normalize_wing("sci.phoenix") == normalize_wing("sci-phoenix")`
 - Grep: no `.replace('-', "_")` outside the shared function
+
+## Resolution (2026-09-01)
+
+Implemented Option B: store::normalize_wing (PEP-503-style: lowercase, fold [-. _ space]->_, collapse runs, trim, empty->global) wired into all 7 derivation/compare sites (wing_from_cwd, cmd_import_all, cmd_sync, discover_project_coverage, detect_wing_duplicates, derive_wing_from_session) plus central --wing normalization at the CLI boundary. Added recall migrate-wings (dry-run default, --yes applies in one tx with VACUUM INTO backup) rewriting chunks.wing, the import:{wing}: source prefix, and the import_sources PK (newest-wins on collision). Applied to live corpus (wings 117->84, dup pairs 33->0, 0 data loss, coverage 11->49/50). Commits a491f3b + 2b742bf.
+
+### Verification
+1. ✓ cargo test passes — "cargo test: 108 lib tests + all integration suites pass (8 normalize_wing unit tests + 6 wing_migration integration tests: three-place rewrite, collision newest-wins, idempotency, read-only plan); clippy --all-targets clean"
+2. ✓ single normalization function used by all callers — "grep confirms zero ad-hoc .replace('-','_') / replace(['-','.']) chains remain outside store::normalize_wing; all 7 sites + the --wing CLI boundary route through the single function; live health verifies 33->0 duplicate pairs"
