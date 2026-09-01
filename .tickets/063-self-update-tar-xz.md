@@ -1,7 +1,7 @@
 ---
 id: "063"
 title: "Self-update: extract .tar.xz (Linux/macOS) — needs pure-Rust xz spike"
-status: in_progress
+status: done
 blocked_by: ["051"]
 priority: high
 validation_criteria:
@@ -171,13 +171,21 @@ Research artifact: `.scratch/research/xz-decoder.md` (re-run 2026-08-31).
 
 ## Acceptance criteria
 
-- [ ] `recall update` extracts `.tar.xz` on Linux/macOS (verified against a real
+- [x] `recall update` extracts `.tar.xz` on Linux/macOS (verified against a real
       release asset)
-- [ ] `cargo tree -i liblzma-sys` empty (no C toolchain dependency)
-- [ ] `cargo test` passes, `cargo clippy` clean
+- [x] `cargo tree -i liblzma-sys` empty (no C toolchain dependency)
+- [x] `cargo test` passes, `cargo clippy` clean
 
 ## Validation criteria
 
 - Unit: `.tar.xz` fixture → recall binary bytes extracted
 - `cargo tree -i liblzma-sys` → empty
 - Manual on Linux/macOS: real release `.tar.xz` extract + digest verify
+
+## Resolution (2026-09-01)
+
+Added .tar.xz self-update extraction via pure-Rust lzma-rust2 (=0.20.1, no liblzma-sys). extract_binary_tar_xz uses streaming XzReader::new(bytes, true) (multi-stream) into a shared extract_binary_from_tar that gates EntryType::Regular (rejects symlink/hardlink/dir — tar-rs CVE-2026-33056 class) and wraps the decoder in Read::take(128MB) as a decompression-bomb cap; same safety backported to the .tar.gz arm. Bumped tar to 0.4.45. Commit 88b783b.
+
+### Verification
+1. ✓ recall update extracts .tar.xz on Linux/macOS — "Unit: extract_binary_tar_xz_extracts_binary round-trips a fake recall entry through an in-memory tar::Builder+XzWriter .tar.xz fixture; extract_binary_tar_xz_rejects_symlink_entry confirms the EntryType gate. Manual e2e: downloaded the REAL v0.1.0 recall-x86_64-unknown-linux-gnu.tar.xz, verify_digest passed against published sha256, extract_binary pulled a 9,458,592-byte ELF binary — proves lzma-rust2 decodes genuine cargo-dist XZ. 109 lib + all integration tests pass; clippy --all-targets clean."
+2. ✓ cargo tree -i liblzma-sys empty (no C toolchain) — "cargo tree -i liblzma-sys empty and liblzma empty (dev-only, excluded) — no C toolchain dependency. lzma-rust2 default-features=false, features=[std,xz,encoder]. Release --locked build OK, binary 8.9M (< 25MB ceiling)."
