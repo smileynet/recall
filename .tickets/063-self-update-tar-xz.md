@@ -68,20 +68,79 @@ intermediate buffer. So `lzma-rust2` wins on correctness AND on fitting the
 existing gz pattern. Sources: docs.rs/lzma-rust2, github hasenbanck/lzma-rust2,
 cargo-dist config reference (see `.scratch/research/xz-decoder.md`).
 
+### Deepening (2026-08-31, research + direct code review)
+
+Dispatched research (tar-extraction safety, self-update security, xz prior art)
+and reviewed the code directly (the review subagent batch throttled twice — the
+corpus is 2 small files, so per sizing guidance it was reviewed in main context).
+
+**1. Constructor signature resolved.** `lzma-rust2` exposes
+`XzReader::new(inner: R, allow_multiple_streams: bool)`. `.xz` can concatenate
+independent streams and cargo-dist output may be multi-stream, so pass **`true`**.
+This closes the "exact constructor args" open question.
+
+**2. Prior art confirms the pattern.** `tar::Archive::new(XzReader::new(r, true))`
+is the exact mirror of the existing `.tar.gz` arm (`GzDecoder` → `tar::Archive`).
+cargo-binstall takes the C route (`liblzma` static-vendored + a tar fork) — we
+stay C-free with `lzma-rust2`, the genuinely maintained pure-Rust streaming crate.
+Footgun to avoid (same as flate2): use the **read**-side reader, not a write-side.
+
+**3. Verify ordering is already correct (update.rs:206-211).** `download_asset` →
+`verify_digest` (hard-fails on absent/mismatch) → `extract_binary` → `replace_self`.
+The digest is checked on the **compressed bytes before decompression**, so the
+`.tar.xz` arm only ever decodes an already-integrity-verified official asset. Keep
+this order — do not extract before verifying.
+
+**4. Extraction-safety hardening (the existing arms are thin).** `extract_named_from_zip`
+(archive.rs) and `extract_binary_tar_gz` (update.rs) match by **basename/suffix
+only** and don't gate entry type or cap output. Because digest-verify precedes
+extraction, a malicious archive would have to be a *signed-by-digest official
+release* — low risk — but the new arm should still add cheap defense-in-depth that
+the tar-safety research flags as standard:
+  - Accept only `EntryType::Regular` (reject symlink/hardlink/dir entries — the
+    class behind CVE-2026-33056 in tar-rs ≤0.4.44).
+  - Read bytes ourselves and return them (we already do — we never `unpack()` to an
+    attacker-controlled path, so Zip Slip traversal does not apply to the write).
+  - Cap decompressed output with `Read::take(MAX)` (xz can expand ~1000:1; set MAX a
+    safe margin above the ~25 MB release binary, e.g. 128 MB) so a decompression
+    bomb can't exhaust memory. Do NOT pre-allocate from `entry.size()`.
+  - **Pin `tar = ">=0.4.45"`** (current lockfile is 0.4.46 ✓; 0.4.45 fixed the
+    symlink CVE). Optional: backport the same `EntryType::Regular` gate to the
+    existing `.tar.gz` arm for consistency (small, in scope-adjacent).
+
+**5. Test pattern (mirror archive.rs).** archive.rs builds in-memory fixtures with
+`make_zip(entries)` using `zip::ZipWriter`. Do the same for `.tar.xz`: build a tar
+with `tar::Builder`, compress with `lzma-rust2`'s XZ encoder into an in-memory
+`.tar.xz`, then assert `extract_binary(bytes, "recall-x.tar.xz")` returns the fake
+`recall` entry. **Flip the existing `extract_binary_tar_xz_bails_pointing_at_063`
+test** (update.rs:553) from asserting a bail to asserting successful extraction.
+Add a negative test: an archive whose only entry is a symlink is rejected.
+
+**6. Security caveat to record forward (not this ticket).** self-update-security
+research: a SHA-256 digest proves integrity, not provenance — if the same host/MITM
+serves the binary it can serve a matching digest. recall verifies digest only (no
+publisher signature). This is a pre-existing property, unchanged by 063, but worth a
+follow-up ticket (minisign/Sigstore-style signature + version monotonicity) if
+supply-chain hardening is wanted. Flag, don't scope-creep 063.
+
 ### Change plan
 
 - [ ] Add dep (pinned, C-free, safe build):
       `lzma-rust2 = { version = "=0.20.1", default-features = false, features = ["std", "xz"] }`
       (keep `std` for `XzReader`; omit `optimization` to stay 100% safe Rust).
-- [ ] `extract_binary_tar_xz(archive_bytes, binary_name)` — a copy of
-      `extract_binary_tar_gz` with `GzDecoder::new(archive_bytes)` replaced by
-      `lzma_rust2::XzReader::new(archive_bytes)` (confirm the exact `XzReader::new`
-      constructor arg against docs.rs — `Read`-based shape is confirmed).
+- [ ] Bump the `tar` floor to `>=0.4.45` (symlink CVE-2026-33056 fix; lockfile
+      already at 0.4.46).
+- [ ] `extract_binary_tar_xz(archive_bytes, binary_name)` — mirror
+      `extract_binary_tar_gz` but: decoder is
+      `lzma_rust2::XzReader::new(archive_bytes, true)` (multi-stream) wrapped in
+      `Read::take(MAX_DECOMPRESSED)` (~128 MB cap vs the ~25 MB binary); iterate
+      `tar::Archive` entries; accept only `EntryType::Regular`; match the binary,
+      read bytes into a `Vec` (no `entry.size()` pre-alloc), return.
 - [ ] Replace the `.tar.xz` bail arm with a call to the new helper.
-- [ ] Unit test: build an in-memory `.tar.xz` fixture containing a fake `recall`
-      entry, assert the bytes round-trip out. (The existing
-      `extract_binary_tar_xz_bails_pointing_at_063` test flips to asserting
-      successful extraction — update it.)
+- [ ] Unit test: build an in-memory `.tar.xz` fixture (tar::Builder → lzma-rust2 XZ
+      encoder) with a fake `recall` entry, assert round-trip. **Flip** the existing
+      `extract_binary_tar_xz_bails_pointing_at_063` (update.rs:553) to assert success.
+      Add a negative test: a symlink-only archive is rejected (EntryType gate).
 - [ ] Grep/tree gate: `cargo tree -i liblzma-sys` empty; `cargo tree -i lzma-rust2`
       shows only the intended dep.
 - [ ] Manual (Linux/macOS): fetch this platform's live release `.tar.xz`, run
