@@ -204,18 +204,49 @@ fn extract_lib_from_tgz(data: &[u8], lib_name: &str, target_path: &PathBuf) -> R
         let mut entry = entry?;
         let entry_size = entry.header().size().unwrap_or(0);
         let path = entry.path()?.to_path_buf();
+        let path_str = path.to_string_lossy();
         let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
-        // Match the library file (may be in a subdirectory like onnxruntime-linux-x64-1.20.0/lib/).
-        // Skip zero-size entries: on Linux the archive contains symlinks
-        // (libonnxruntime.so → libonnxruntime.so.1.20.0) that share the prefix
-        // but carry no data — extracting one would produce an empty file.
-        if (filename == lib_name || filename.starts_with(lib_name)) && entry_size > 0 {
+        if ort_lib_entry_matches(&path_str, filename, lib_name, entry_size) {
             let mut file = std::fs::File::create(target_path)?;
             std::io::copy(&mut entry, &mut file)?;
             return Ok(());
         }
     }
     anyhow::bail!("Could not find {} in the downloaded archive", lib_name);
+}
+
+/// Decide whether a tar entry is the real ONNX Runtime shared library.
+///
+/// The naming scheme differs per platform, so a single prefix test is wrong:
+/// - Linux: `libonnxruntime.so` (symlink, size 0) and `libonnxruntime.so.1.20.0`
+///   (real, has data) — version is a SUFFIX, so `starts_with(lib_name)` matches
+///   the real file.
+/// - macOS: `libonnxruntime.dylib` (symlink, size 0) and
+///   `libonnxruntime.1.20.0.dylib` (real, has data) — version is INFIXED before
+///   the extension, so `starts_with(lib_name)` does NOT match the real file.
+///   The archive also ships `.../*.dSYM/.../libonnxruntime.1.20.0.dylib` (debug
+///   symbols) which must be rejected.
+///
+/// Rule: the entry must carry data (`entry_size > 0`, which skips the zero-size
+/// symlinks), must not live under a `.dSYM` bundle, and its filename must either
+/// equal `lib_name` or start with `libonnxruntime` and end with the same
+/// extension as `lib_name`. This covers Linux suffix-versioning and macOS
+/// infix-versioning with one predicate.
+fn ort_lib_entry_matches(path: &str, filename: &str, lib_name: &str, entry_size: u64) -> bool {
+    if entry_size == 0 || path.contains(".dSYM") {
+        return false;
+    }
+    if filename == lib_name || filename.starts_with(lib_name) {
+        return true;
+    }
+    // Infix-versioned form (macOS): libonnxruntime.<version>.dylib
+    let ext = std::path::Path::new(lib_name)
+        .extension()
+        .and_then(|e| e.to_str());
+    match ext {
+        Some(ext) => filename.starts_with("libonnxruntime") && filename.ends_with(&format!(".{ext}")),
+        None => false,
+    }
 }
 
 fn extract_lib_from_zip(data: &[u8], lib_name: &str, target_path: &PathBuf) -> Result<()> {
@@ -426,6 +457,65 @@ mod tests {
     fn ort_platform_ext_is_zip_or_tgz() {
         let (_slug, ext) = ort_platform();
         assert!(matches!(ext, "zip" | "tgz"), "unexpected ext: {ext}");
+    }
+
+    #[test]
+    fn ort_lib_entry_matches_macos_versioned_dylib() {
+        // Real lib: version infixed before .dylib — must match.
+        assert!(ort_lib_entry_matches(
+            "./onnxruntime-osx-arm64-1.20.0/lib/libonnxruntime.1.20.0.dylib",
+            "libonnxruntime.1.20.0.dylib",
+            "libonnxruntime.dylib",
+            25_477_000,
+        ));
+    }
+
+    #[test]
+    fn ort_lib_entry_matches_rejects_macos_symlink_and_dsym() {
+        // Zero-size symlink (libonnxruntime.dylib -> versioned) must be skipped.
+        assert!(!ort_lib_entry_matches(
+            "./onnxruntime-osx-arm64-1.20.0/lib/libonnxruntime.dylib",
+            "libonnxruntime.dylib",
+            "libonnxruntime.dylib",
+            0,
+        ));
+        // Debug-symbol copy inside a .dSYM bundle must be rejected even though it
+        // has data and a matching filename.
+        assert!(!ort_lib_entry_matches(
+            "./onnxruntime-osx-arm64-1.20.0/lib/libonnxruntime.1.20.0.dylib.dSYM/Contents/Resources/DWARF/libonnxruntime.1.20.0.dylib",
+            "libonnxruntime.1.20.0.dylib",
+            "libonnxruntime.dylib",
+            9_113_758,
+        ));
+    }
+
+    #[test]
+    fn ort_lib_entry_matches_linux_suffix_versioned_so() {
+        // Real lib: version is a suffix — starts_with(lib_name) covers it.
+        assert!(ort_lib_entry_matches(
+            "./onnxruntime-linux-x64-1.20.0/lib/libonnxruntime.so.1.20.0",
+            "libonnxruntime.so.1.20.0",
+            "libonnxruntime.so",
+            15_000_000,
+        ));
+        // Zero-size symlink form must be skipped.
+        assert!(!ort_lib_entry_matches(
+            "./onnxruntime-linux-x64-1.20.0/lib/libonnxruntime.so",
+            "libonnxruntime.so",
+            "libonnxruntime.so",
+            0,
+        ));
+    }
+
+    #[test]
+    fn ort_lib_entry_matches_exact_name() {
+        // A plain, unversioned real file (has data, name equals lib_name).
+        assert!(ort_lib_entry_matches(
+            "onnxruntime/lib/libonnxruntime.dylib",
+            "libonnxruntime.dylib",
+            "libonnxruntime.dylib",
+            25_000_000,
+        ));
     }
 
     #[test]
