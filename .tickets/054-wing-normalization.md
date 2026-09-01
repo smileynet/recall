@@ -48,77 +48,131 @@ memories filed under the other. This makes the migration decision below
 (re-ingest vs. leave historical) higher-priority — the corpus already has ~33
 fragmented projects.
 
-## Proposal (2026-08-31, code-verified)
+## Proposal (2026-08-31, code-verified + research/review-backed)
 
-Re-grepped current source. The diagnosis holds but the count was understated:
-it is **5 call sites across 2 files, 2 divergent schemes** (not "3 sites / 3
-schemes"). Additionally, user-supplied `--wing` args are normalized *nowhere*,
-which is a third divergence the original plan missed.
+Re-grepped current source and dispatched subagents for prior-art research and an
+internal code/docs/config review. The diagnosis holds but was understated on
+**every** axis: it is **7 wing-handling sites across 2 files, up to 4 divergent
+schemes**, plus a user-`--wing` passthrough that normalizes *nowhere*.
 
-### Verified call sites
+### Verified sites (full inventory from code review)
 
 | # | Location | Current transform | Scheme |
 |---|----------|-------------------|--------|
-| 1 | `src/cli.rs:225` (`wing_from_cwd`) | `.replace('-', "_")` | dashes only |
-| 2 | `src/cli.rs:435` (`cmd_prime` inline cwd) | `.replace('-', "_")` | dashes only |
-| 3 | `src/cli.rs:327` (`cmd_import_all`) | `.replace('-', "_").replace('.', "")` | dashes + dots |
-| 4 | `src/cli.rs:399` (`cmd_sync`) | `.replace('-', "_").replace('.', "")` | dashes + dots |
-| 5 | `src/ingest.rs:807,818` (`derive_wing_from_session`) | `.replace('-', "_")` | dashes only |
-| 6 | user `--wing` (`add`/`import`/`search`/`prime`) | **none** | raw passthrough |
+| 1 | `cli.rs:223` (`wing_from_cwd`) | `.replace('-', "_")` | A: dashes only |
+| 2 | `cli.rs:435` (`cmd_prime` inline dup of #1) | `.replace('-', "_")` | A |
+| 3 | `cli.rs:327` (`cmd_import_all`) | `.replace('-', "_").replace('.', "")` | B: dash+dot(strip) |
+| 4 | `cli.rs:399` (`cmd_sync`) | `.replace('-', "_").replace('.', "")` | B |
+| 5 | `cli.rs:551` (`discover_project_coverage`) | `.replace('-', "_").replace('.', "")` | B — **missed by first pass; drives health coverage math** |
+| 6 | `cli.rs:601` (`detect_wing_duplicates`) | `.replace(['-','.'], "_").to_lowercase()` | C — **4th scheme; lowercases but no run-collapse/space** |
+| 7 | `ingest.rs:805,816` (`derive_wing_from_session`) | `.replace('-', "_")`, else `"sessions"` | A |
+| 8 | user `--wing` on `add`/`search`/`prime`/`import`/`import-all`/`forget` | **none** (raw passthrough) | "none" |
 
-Site 6 is why `recall add --wing my-project` files under `my-project` while
-auto-derivation of the same dir yields `my_project`. Any fix that only touches
-1-5 leaves this gap open.
+Every `store.rs` wing comparison is exact SQL equality (`wing = ?`) or an
+`import:{wing}:` prefix match — **nothing normalizes at read time**. So a row is
+only reachable if producer and consumer applied the identical transform to the
+identical input. That is precisely the 33 duplicate pairs. Read/compare paths are
+safe under a shared function (they take whatever string they're given); the risk
+lives entirely in the write side and in historical data.
 
-### Canonical rule
+### Canonical rule (validated against prior art)
 
 ```
 normalize_wing(name):
-  lowercase
+  lowercase (NFKC + casefold if non-ASCII dir names are in scope)
   replace each of [ '-', '.', ' ' ] with '_'
   collapse runs of '_' to a single '_'
   trim leading/trailing '_'
   if empty -> "global"
 ```
 
-Rationale: lowercasing + unifying the three separators covers every duplicate
-pair observed in the live health output. Collapsing runs prevents `a--b` and
-`a-.b` diverging. `"global"` fallback matches the existing `wing_from_cwd`
-default.
+Prior art directly supports this:
+- **Python PEP 503** normalizes by lowercasing and collapsing *runs* of `[-_.]`
+  to one separator — `Friendly-Bard`, `friendly.bard`, `friendly_bard`,
+  `friendly--bard` all collapse to one key. This is the strongest match.
+- **Cargo** treats `-`/`_` as a two-way equivalence class and canonicalizes to
+  `_` (Rust identifiers can't hold `-`) — matches recall's existing `_`
+  convention (`web_app`, `my_project`).
+- **npm** validates only (no folding) — the anti-pattern that produced our bug.
+- **Kubernetes** rejects rather than normalizes; borrow its *guardrails*:
+  start/end-alphanumeric and a length cap.
+- **Unicode UAX #31 / #15**: NFKC+casefold ("NFKC_Casefold") is the recommended
+  identifier fold; NFKC does NOT strip accents (add NFD+strip only if we want
+  pure-ASCII wings). Idempotent given no unassigned code points.
+
+Collision caveat (from research): every fold step is many-to-one, so genuinely
+distinct dirs (`a.b` vs `a-b`) collapse to one wing. The live health data implies
+these are already duplicates in practice, but the migration must confirm no
+*intentionally distinct* pair exists before merging (open question 2 below).
 
 ### Placement
 
-Put `pub fn normalize_wing(&str) -> String` in `store.rs` (already the shared
-low-level module that both `cli.rs` and `ingest.rs` depend on — no new module,
-no dependency cycle). `cmd_prime`'s inline closure (site 2) folds into a call to
-`wing_from_cwd`, which itself calls `normalize_wing`.
+`pub fn normalize_wing(&str) -> String` in `store.rs` (shared low-level module
+both `cli.rs` and `ingest.rs` already depend on — no new module, no cycle).
+
+**Normalize at TWO boundaries** (review finding — this is the correction that
+makes all commands agree):
+1. **Derivation sites** (1-5, 7): replace each `.replace(...)` chain with
+   `normalize_wing`. Fold site 2's inline closure into `wing_from_cwd`. Point
+   site 6 (`detect_wing_duplicates`) at `normalize_wing` too, keeping it as a
+   permanent regression guard in `health` (should then report ~0 dupes).
+2. **CLI arg boundary** (site 8): normalize the user `--wing` **once centrally in
+   `run()`/dispatch right after `Cli::parse()`** — cleaner than per-handler and
+   covers `add`/`search`/`prime`/`forget` (`Option<String>`) AND
+   `import`/`import-all` (required `String`) uniformly, including future commands.
 
 ### Change list
 
-- [ ] `store::normalize_wing` + unit tests (dashes, dots, spaces, case, repeats, empty)
-- [ ] Rewrite `wing_from_cwd` to `normalize_wing(file_name)`; delete the inline
-      closure at site 2 and call `wing_from_cwd`
-- [ ] Sites 3,4,5: replace the `.replace(...)` chains with `normalize_wing`
-- [ ] Site 6: normalize `--wing` at the CLI boundary (normalize in each handler,
-      or once in `dispatch` before the value is used) so user input and
-      auto-derived wings converge
-- [ ] Grep gate: no `.replace('-', "_")` remains outside `normalize_wing`
+- [ ] `store::normalize_wing` + unit tests (dashes, dots, spaces, case, repeats,
+      empty, run-collapse `a--b`==`a_b`, PEP-503 parity `a.b`==`a-b`==`a_b`)
+- [ ] Rewrite `wing_from_cwd` → `normalize_wing`; delete site 2's inline closure,
+      call `wing_from_cwd`
+- [ ] Sites 3,4,**5**,7: replace `.replace(...)` chains with `normalize_wing`
+      (site 5 = `discover_project_coverage`, or `health` coverage math breaks)
+- [ ] Site 6: `detect_wing_duplicates` calls `normalize_wing`; keep as regression check
+- [ ] Site 8: central `--wing` normalization in `run()` (covers Option + required-String)
+- [ ] Unify fallback default: cwd/prime use `"global"`, session uses `"sessions"`,
+      import uses `unwrap_or_default()` → **empty-string wing**. Pick one
+      (`"global"` via the `normalize_wing` empty→global rule) and document it.
+- [ ] Grep gate: no `.replace('-', "_")` and no `.replace('.', "")` remain outside `normalize_wing`
+
+### Acceptance additions (from review)
+
+- Output of `normalize_wing` must be a plain identifier (never leaks an
+  FTS-special char into a `MATCH` expression elsewhere).
+- `discover_project_coverage` and `detect_wing_duplicates` must use the same
+  function as the import derivations, or coverage/dup reporting silently diverges.
 
 ### Migration decision (needs sign-off before coding)
 
-Two options for the ~33 already-fragmented pairs in the live corpus:
+Two options for the ~33 already-fragmented pairs:
 
-- **A — Leave historical, fix forward.** New writes land canonically; old
-  variant wings persist until they age out. Zero risk, but the 33 pairs keep
-  splitting search until re-ingested. Cheapest.
-- **B — One-shot merge migration.** Add a `recall migrate-wings` (or fold into
-  `health --fix`) that `UPDATE`s `wing = normalize_wing(wing)` across all rows,
-  merging variants. Fixes the corpus immediately but is a bulk mutation —
-  needs the process-lock (ticket 055) and a dry-run/count preview first.
+- **A — Leave historical, fix forward.** New writes land canonically; old variant
+  wings age out. Zero risk. Ship this as 054's unit.
+- **B — One-shot merge migration.** Bulk-merge existing variants. **Under-specified
+  in the original: review found the wing is baked into THREE places**, not just
+  `chunks.wing`:
+  - `chunks.wing` (the column)
+  - `chunks.source` — the `import:{OLD_WING}:{path}` prefix
+  - `import_sources` composite PK `(path, wing)` — the manifest/hash-gate
+  A coherent B must rewrite all three in one transaction, **or** force a full
+  re-import of affected wings — otherwise the hash-gate re-imports or orphan-deletes
+  on next sync. Migration best-practice (research): one immutable plan object,
+  dry-run/preview using the *same* logic, tested backup (`VACUUM INTO`) immediately
+  before, wrap in one `BEGIN IMMEDIATE…COMMIT`, guard on `PRAGMA user_version`,
+  make the transform idempotent, deterministic newest-wins winner rule for colliding
+  rows.
 
-Recommendation: ship the normalization (A behavior) as the mergeable unit, file
-B as a **separate follow-up ticket** (`--blocked-by 054`) so the code fix isn't
-gated on the riskier bulk mutation. Confirm before implementing.
+**Recommendation:** ship A as 054. File B as a **separate follow-up ticket**:
+`tkt new wing-merge-migration --blocked-by 054 --blocked-by 055` (055 supplies the
+process-lock B requires). Cross-reference **072** (import `--force` guard) —
+its `import:{wing}:` delete key is normalization-sensitive; land **054 before 072**
+so 072's guard is written against the canonical wing. 054 itself stays
+`blocked_by: []` (ships standalone). Confirm A-vs-B and the follow-up ticket
+before implementing.
+
+Research/review artifacts: `.scratch/research/{slug-normalization,migration-patterns,prior-art}.md`,
+`.scratch/review/{code-review,docs-review,config-tickets-review}.md`.
 
 ## What to build
 
