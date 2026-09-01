@@ -393,27 +393,37 @@ fn extract_binary(archive_bytes: &[u8], asset_name: &str) -> Result<Vec<u8>> {
     } else if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
         extract_binary_tar_gz(archive_bytes, binary_name)
     } else if lower.ends_with(".tar.xz") {
-        anyhow::bail!(
-            ".tar.xz self-update extraction is not yet supported (asset '{}') — see ticket 063",
-            asset_name
-        )
+        extract_binary_tar_xz(archive_bytes, binary_name)
     } else {
         anyhow::bail!("unrecognized release archive format: '{}'", asset_name)
     }
 }
 
-/// Extract `binary_name` from a gzip-compressed tar archive.
-fn extract_binary_tar_gz(archive_bytes: &[u8], binary_name: &str) -> Result<Vec<u8>> {
-    use flate2::read::GzDecoder;
+/// Upper bound on decompressed archive bytes we will read while hunting for the
+/// binary. The release binary is ~25 MB; this cap is a safe margin above that
+/// so a malicious/corrupt archive can't drive unbounded decompression (xz can
+/// expand ~1000:1). We only ever extract a digest-verified official asset, so
+/// this is defense-in-depth, not the primary gate.
+const MAX_DECOMPRESSED_BYTES: u64 = 128 * 1024 * 1024;
 
-    let decoder = GzDecoder::new(archive_bytes);
-    let mut archive = tar::Archive::new(decoder);
+/// Extract `binary_name` from a decompressed tar stream.
+///
+/// Safety: accepts only `EntryType::Regular` entries (rejects symlink/hardlink/
+/// dir entries — the class behind tar-rs CVE-2026-33056) and reads bytes into a
+/// buffer we own (never `unpack()` to an archive-controlled path, so path
+/// traversal does not apply). The caller wraps the decoder in `Read::take` to
+/// bound total decompressed bytes.
+fn extract_binary_from_tar<R: Read>(reader: R, binary_name: &str) -> Result<Vec<u8>> {
+    let mut archive = tar::Archive::new(reader);
 
     for entry in archive
         .entries()
         .context("failed to read archive entries")?
     {
         let mut entry = entry.context("failed to read archive entry")?;
+        if entry.header().entry_type() != tar::EntryType::Regular {
+            continue;
+        }
         let path = entry.path().context("failed to read entry path")?;
         if path.file_name().and_then(|n| n.to_str()) == Some(binary_name) {
             let mut buf = Vec::new();
@@ -425,6 +435,25 @@ fn extract_binary_tar_gz(archive_bytes: &[u8], binary_name: &str) -> Result<Vec<
     }
 
     anyhow::bail!("binary '{}' not found in archive", binary_name)
+}
+
+/// Extract `binary_name` from a gzip-compressed tar archive.
+fn extract_binary_tar_gz(archive_bytes: &[u8], binary_name: &str) -> Result<Vec<u8>> {
+    use flate2::read::GzDecoder;
+
+    let decoder = GzDecoder::new(archive_bytes).take(MAX_DECOMPRESSED_BYTES);
+    extract_binary_from_tar(decoder, binary_name)
+}
+
+/// Extract `binary_name` from an xz-compressed tar archive (Linux/macOS
+/// cargo-dist default). Pure-Rust decode via `lzma-rust2` (no C toolchain).
+fn extract_binary_tar_xz(archive_bytes: &[u8], binary_name: &str) -> Result<Vec<u8>> {
+    use lzma_rust2::XzReader;
+
+    // allow_multiple_streams = true: cargo-dist .xz output may concatenate
+    // independent streams.
+    let decoder = XzReader::new(archive_bytes, true).take(MAX_DECOMPRESSED_BYTES);
+    extract_binary_from_tar(decoder, binary_name)
 }
 
 /// Replace the current binary with the new one.
@@ -549,12 +578,75 @@ mod tests {
         assert!(verify_digest(b"hello", Some("md5:abc")).is_err());
     }
 
+    /// Build an in-memory `.tar.xz` containing `entries` (path, contents) as
+    /// regular files. Mirrors archive.rs's `make_zip` fixture helper.
+    fn make_tar_xz(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        use lzma_rust2::{XzOptions, XzWriter};
+        use std::io::Write;
+
+        // 1. Build the tar into a buffer.
+        let mut tar_buf = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut tar_buf);
+            for (path, data) in entries {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(data.len() as u64);
+                header.set_mode(0o755);
+                header.set_entry_type(tar::EntryType::Regular);
+                header.set_cksum();
+                builder.append_data(&mut header, path, *data).unwrap();
+            }
+            builder.finish().unwrap();
+        }
+
+        // 2. XZ-compress the tar.
+        let mut xz = XzWriter::new(Vec::new(), XzOptions::default()).unwrap();
+        xz.write_all(&tar_buf).unwrap();
+        xz.finish().unwrap()
+    }
+
     #[test]
-    fn extract_binary_tar_xz_bails_pointing_at_063() {
-        let err = extract_binary(b"not-really-an-archive", "recall-x.tar.xz")
+    fn extract_binary_tar_xz_extracts_binary() {
+        let archive = make_tar_xz(&[
+            ("recall-x86_64-unknown-linux-gnu/recall", b"XZBINARY"),
+            ("recall-x86_64-unknown-linux-gnu/README.md", b"ignore me"),
+        ]);
+        let got = extract_binary(&archive, "recall-x86_64-unknown-linux-gnu.tar.xz").unwrap();
+        assert_eq!(got, b"XZBINARY");
+    }
+
+    #[test]
+    fn extract_binary_tar_xz_rejects_symlink_entry() {
+        // A .tar.xz whose only "recall" entry is a symlink must not be extracted
+        // as the binary (EntryType::Regular gate). Build a tar with a symlink
+        // entry named `recall`, xz-compress it, and confirm extraction fails.
+        use lzma_rust2::{XzOptions, XzWriter};
+        use std::io::Write;
+
+        let mut tar_buf = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut tar_buf);
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Symlink);
+            header.set_size(0);
+            header.set_mode(0o777);
+            header.set_cksum();
+            builder
+                .append_link(&mut header, "recall", "/etc/passwd")
+                .unwrap();
+            builder.finish().unwrap();
+        }
+        let mut xz = XzWriter::new(Vec::new(), XzOptions::default()).unwrap();
+        xz.write_all(&tar_buf).unwrap();
+        let archive = xz.finish().unwrap();
+
+        let err = extract_binary(&archive, "recall-x.tar.xz")
             .unwrap_err()
             .to_string();
-        assert!(err.contains("063"), "should point at ticket 063: {err}");
+        assert!(
+            err.contains("not found"),
+            "symlink entry must be rejected, not extracted: {err}"
+        );
     }
 
     #[test]
