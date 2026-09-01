@@ -804,7 +804,7 @@ fn derive_wing_from_session(sessions_dir: &Path, jsonl_path: &Path) -> String {
     if let Some(cwd) = extract_cwd_from_session(sessions_dir, jsonl_path) {
         let project_name = Path::new(&cwd)
             .file_name()
-            .map(|n| n.to_string_lossy().replace('-', "_"))
+            .map(|n| store::normalize_wing(&n.to_string_lossy()))
             .unwrap_or_default();
         if !project_name.is_empty() {
             return project_name;
@@ -815,7 +815,7 @@ fn derive_wing_from_session(sessions_dir: &Path, jsonl_path: &Path) -> String {
     jsonl_path
         .parent()
         .and_then(|p| p.file_name())
-        .map(|n| n.to_string_lossy().replace('-', "_"))
+        .map(|n| store::normalize_wing(&n.to_string_lossy()))
         .unwrap_or_else(|| "sessions".to_string())
 }
 

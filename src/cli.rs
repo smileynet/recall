@@ -1,5 +1,6 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use rusqlite::params;
 
 use recall::{
     embed, guard, ingest, logging, migrate, recall_log, search, store, telemetry, update,
@@ -92,6 +93,17 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Merge fragmented wings into their canonical normalized form (ticket 054).
+    /// Dry-run by default; pass --yes to apply. Rewrites chunks.wing, the
+    /// import:{wing}: source prefix, and the import_sources manifest together.
+    MigrateWings {
+        /// Apply the migration (default is a read-only dry-run preview)
+        #[arg(long)]
+        yes: bool,
+        /// Skip the automatic pre-apply backup (not recommended)
+        #[arg(long)]
+        no_backup: bool,
+    },
     /// Manage local telemetry and crash reporting
     Telemetry {
         #[command(subcommand)]
@@ -145,18 +157,25 @@ pub fn run() -> i32 {
             query,
             wing,
             results,
-        } => cmd_search(&query, wing.as_deref(), results),
+        } => {
+            let wing = wing.map(|w| store::normalize_wing(&w));
+            cmd_search(&query, wing.as_deref(), results)
+        }
         Commands::Add {
             content,
             wing,
             room,
             r#type,
         } => {
-            let resolved_wing = wing.unwrap_or_else(wing_from_cwd);
+            let resolved_wing = wing
+                .map(|w| store::normalize_wing(&w))
+                .unwrap_or_else(wing_from_cwd);
             cmd_add(&content, &resolved_wing, &room, &r#type)
         }
         Commands::Ingest { path } => cmd_ingest(path.as_deref()),
-        Commands::Import { path, wing, force } => cmd_import(&path, &wing, force),
+        Commands::Import { path, wing, force } => {
+            cmd_import(&path, &store::normalize_wing(&wing), force)
+        }
         Commands::ImportAll { force } => cmd_import_all(force),
         Commands::Prime { wing } => cmd_prime(wing.as_deref()),
         Commands::Status => cmd_status(),
@@ -165,8 +184,9 @@ pub fn run() -> i32 {
             wing,
             older_than,
             yes,
-        } => cmd_forget(&wing, older_than.as_deref(), yes),
+        } => cmd_forget(&store::normalize_wing(&wing), older_than.as_deref(), yes),
         Commands::Migrate { from, embed, force } => cmd_migrate(&from, embed, force),
+        Commands::MigrateWings { yes, no_backup } => cmd_migrate_wings(yes, no_backup),
         Commands::Telemetry { action } => match action {
             TelemetryAction::Status => telemetry::cmd_telemetry_status(),
             TelemetryAction::Enable => telemetry::cmd_telemetry_enable(),
@@ -211,6 +231,7 @@ fn command_name(cmd: &Commands) -> String {
         Commands::Health { .. } => "health",
         Commands::Forget { .. } => "forget",
         Commands::Migrate { .. } => "migrate",
+        Commands::MigrateWings { .. } => "migrate-wings",
         Commands::Telemetry { .. } => "telemetry",
         Commands::Sync { .. } => "sync",
         Commands::Update => "update",
@@ -222,8 +243,64 @@ fn command_name(cmd: &Commands) -> String {
 fn wing_from_cwd() -> String {
     std::env::current_dir()
         .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().replace('-', "_")))
+        .and_then(|p| p.file_name().map(|n| store::normalize_wing(&n.to_string_lossy())))
         .unwrap_or_else(|| "global".to_string())
+}
+
+/// Merge fragmented wings into canonical form. Dry-run by default; `--yes`
+/// applies inside one transaction after a VACUUM INTO backup.
+fn cmd_migrate_wings(apply: bool, no_backup: bool) -> Result<i32> {
+    let db = store::open_db()?;
+    let plan = store::plan_wing_migration(&db)?;
+
+    if plan.rewrites.is_empty() {
+        println!("All wings are already canonical — nothing to migrate.");
+        return Ok(0);
+    }
+
+    println!("Wing merge plan ({} wing(s) to rewrite):", plan.rewrites.len());
+    println!(
+        "  distinct wings: {} -> {}",
+        plan.distinct_wings_before, plan.distinct_wings_after
+    );
+    println!("  chunks affected: {}", plan.total_chunks_affected);
+    println!();
+    for rw in &plan.rewrites {
+        let collision_note = if rw.manifest_collisions > 0 {
+            format!(" ({} manifest collision(s), newest wins)", rw.manifest_collisions)
+        } else {
+            String::new()
+        };
+        println!(
+            "  {} -> {}  [{} chunk(s)]{}",
+            rw.from, rw.to, rw.chunk_count, collision_note
+        );
+    }
+    println!();
+
+    if !apply {
+        println!("Dry-run only. Re-run with --yes to apply.");
+        return Ok(0);
+    }
+
+    // Backup before mutating (VACUUM INTO produces a complete single-file copy).
+    if !no_backup {
+        let src = store::db_path();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let backup = src.with_extension(format!("pre-wingmerge.{}.sqlite3", ts));
+        db.execute("VACUUM INTO ?1", params![backup.to_string_lossy()])
+            .with_context(|| format!("creating backup at {}", backup.display()))?;
+        println!("Backup written: {}", backup.display());
+    }
+
+    let rewritten = store::apply_wing_migration(&db)?;
+    // Checkpoint the WAL so the merged state is durable in the main db file.
+    let _ = db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    println!("Migration complete: {} chunk(s) rewritten.", rewritten);
+    Ok(0)
 }
 
 fn cmd_search(query: &str, wing: Option<&str>, max_results: usize) -> Result<i32> {
@@ -324,7 +401,7 @@ fn cmd_import_all(force: bool) -> Result<i32> {
                 if path.is_dir() && path.join(".memory").is_dir() {
                     let wing = path
                         .file_name()
-                        .map(|n| n.to_string_lossy().replace('-', "_").replace('.', ""))
+                        .map(|n| store::normalize_wing(&n.to_string_lossy()))
                         .unwrap_or_default();
                     let mem_path = path.join(".memory");
                     recall_log!(
@@ -396,7 +473,7 @@ fn cmd_sync(force: bool, skip_import: bool, skip_ingest: bool) -> Result<i32> {
                     if path.is_dir() && path.join(".memory").is_dir() {
                         let wing = path
                             .file_name()
-                            .map(|n| n.to_string_lossy().replace('-', "_").replace('.', ""))
+                            .map(|n| store::normalize_wing(&n.to_string_lossy()))
                             .unwrap_or_default();
                         let mem_path = path.join(".memory");
                         recall_log!(
@@ -429,12 +506,9 @@ fn cmd_prime(wing_arg: Option<&str>) -> Result<i32> {
     embed::check_model_mismatch(&db);
 
     // Auto-detect wing from cwd if not provided
-    let wing = wing_arg.map(|w| w.to_string()).unwrap_or_else(|| {
-        std::env::current_dir()
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().replace('-', "_")))
-            .unwrap_or_else(|| "global".to_string())
-    });
+    let wing = wing_arg
+        .map(store::normalize_wing)
+        .unwrap_or_else(wing_from_cwd);
 
     // Instructions header (always shown)
     println!("## Recall - Cross-Session Memory");
@@ -657,7 +731,7 @@ fn detect_wing_duplicates(wing_names: &[String]) -> Vec<Vec<String>> {
     let mut normalized: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     for name in wing_names {
-        let key = name.replace(['-', '.'], "_").to_lowercase();
+        let key = store::normalize_wing(name);
         normalized.entry(key).or_default().push(name.clone());
     }
     normalized
@@ -701,7 +775,7 @@ fn discover_project_coverage(import_wings: &[String]) -> (usize, usize, Vec<Stri
                 if path.is_dir() && path.join(".memory").is_dir() {
                     let wing_name = path
                         .file_name()
-                        .map(|n| n.to_string_lossy().replace('-', "_").replace('.', ""))
+                        .map(|n| store::normalize_wing(&n.to_string_lossy()))
                         .unwrap_or_default();
                     if !wing_name.is_empty() {
                         discoverable.push(wing_name);

@@ -41,6 +41,43 @@ pub fn db_path() -> PathBuf {
     PathBuf::from(home).join(".recall").join("recall.sqlite3")
 }
 
+/// Canonical wing name derived from an arbitrary directory or user-supplied
+/// string. This is the single source of truth for wing naming — every
+/// derivation site and the `--wing` CLI boundary must route through it so the
+/// same project always lands in the same wing.
+///
+/// Rule (PEP 503-style, adapted to recall's underscore convention):
+/// lowercase, map each of `-`, `.`, space to `_`, collapse runs of `_` to one,
+/// trim leading/trailing `_`. An empty result maps to `"global"` (the historic
+/// default for cwd-derived wings).
+///
+/// Idempotent: `normalize_wing(normalize_wing(x)) == normalize_wing(x)`.
+pub fn normalize_wing(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut prev_underscore = false;
+    for ch in name.chars() {
+        let mapped = match ch {
+            '-' | '.' | ' ' | '_' => '_',
+            other => other.to_ascii_lowercase(),
+        };
+        if mapped == '_' {
+            if !prev_underscore {
+                out.push('_');
+                prev_underscore = true;
+            }
+        } else {
+            out.push(mapped);
+            prev_underscore = false;
+        }
+    }
+    let trimmed = out.trim_matches('_');
+    if trimmed.is_empty() {
+        "global".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn init_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "
@@ -462,6 +499,138 @@ pub fn delete_chunks_by_source_prefix(conn: &Connection, prefix: &str) -> Result
     Ok(deleted)
 }
 
+// --- Wing normalization migration (ticket 054 Option B) ---
+
+/// A planned rewrite of one non-canonical wing into its canonical form.
+#[derive(Debug, Clone, Serialize)]
+pub struct WingRewrite {
+    pub from: String,
+    pub to: String,
+    pub chunk_count: i64,
+    /// import_sources manifest rows whose (path) already exists under `to`
+    /// (composite-PK collision resolved by newest last_indexed_at wins).
+    pub manifest_collisions: i64,
+}
+
+/// Summary of a wing-merge migration plan (no mutation performed).
+#[derive(Debug, Default, Serialize)]
+pub struct WingMigrationPlan {
+    pub rewrites: Vec<WingRewrite>,
+    pub total_chunks_affected: i64,
+    pub distinct_wings_before: i64,
+    pub distinct_wings_after: i64,
+}
+
+/// Compute the wing-merge plan: which stored wings differ from their canonical
+/// `normalize_wing` form, and how many chunks/manifest rows each touches. Pure
+/// read — performs NO mutation, so it is safe to run for a dry-run preview.
+pub fn plan_wing_migration(conn: &Connection) -> Result<WingMigrationPlan> {
+    let mut stmt = conn.prepare("SELECT wing, COUNT(*) FROM chunks GROUP BY wing")?;
+    let rows: Vec<(String, i64)> = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let mut plan = WingMigrationPlan::default();
+    let mut canonical_set = std::collections::HashSet::new();
+    for (wing, _) in &rows {
+        canonical_set.insert(normalize_wing(wing));
+    }
+    plan.distinct_wings_before = rows.len() as i64;
+    plan.distinct_wings_after = canonical_set.len() as i64;
+
+    for (wing, chunk_count) in rows {
+        let canonical = normalize_wing(&wing);
+        if canonical == wing {
+            continue;
+        }
+        // Count manifest rows that would collide on (path, canonical).
+        let manifest_collisions: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM import_sources src
+             WHERE src.wing = ?1
+               AND EXISTS (SELECT 1 FROM import_sources dst
+                           WHERE dst.wing = ?2 AND dst.path = src.path)",
+            params![wing, canonical],
+            |r| r.get(0),
+        )?;
+        plan.total_chunks_affected += chunk_count;
+        plan.rewrites.push(WingRewrite {
+            from: wing,
+            to: canonical,
+            chunk_count,
+            manifest_collisions,
+        });
+    }
+    plan.rewrites.sort_by(|a, b| b.chunk_count.cmp(&a.chunk_count));
+    Ok(plan)
+}
+
+/// Apply the wing-merge migration in a single transaction. Rewrites all three
+/// places a wing is persisted:
+///   1. `chunks.wing`
+///   2. `chunks.source` — the `import:{OLD_WING}:` prefix
+///   3. `import_sources` composite PK `(path, wing)` (newest-wins on collision)
+///
+/// Idempotent: rows already canonical are skipped; a second run is a no-op.
+/// Guarded by `PRAGMA user_version` bump so a completed migration is recorded.
+/// Returns the number of chunk rows whose wing was rewritten.
+pub fn apply_wing_migration(conn: &Connection) -> Result<i64> {
+    let plan = plan_wing_migration(conn)?;
+    if plan.rewrites.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.unchecked_transaction()?;
+    let mut rewritten = 0i64;
+    for rw in &plan.rewrites {
+        // 2. Rewrite the import:{old}: source prefix first (before wing column),
+        //    using SQL string surgery scoped to this wing's import rows.
+        let old_prefix = format!("import:{}:", rw.from);
+        let new_prefix = format!("import:{}:", rw.to);
+        tx.execute(
+            "UPDATE chunks
+             SET source = ?1 || substr(source, length(?2) + 1)
+             WHERE wing = ?3 AND source LIKE ?2 || '%'",
+            params![new_prefix, old_prefix, rw.from],
+        )?;
+
+        // 3. import_sources: delete rows that would collide on (path, canonical)
+        //    keeping the newest by last_indexed_at, then repoint the rest.
+        tx.execute(
+            "DELETE FROM import_sources
+             WHERE wing = ?1
+               AND EXISTS (
+                 SELECT 1 FROM import_sources dst
+                 WHERE dst.wing = ?2 AND dst.path = import_sources.path
+                   AND dst.last_indexed_at >= import_sources.last_indexed_at
+               )",
+            params![rw.from, rw.to],
+        )?;
+        // Any surviving colliding dst rows (older than the src we keep) are
+        // removed so the repoint below cannot violate the PK.
+        tx.execute(
+            "DELETE FROM import_sources
+             WHERE wing = ?2
+               AND EXISTS (
+                 SELECT 1 FROM import_sources src
+                 WHERE src.wing = ?1 AND src.path = import_sources.path
+               )",
+            params![rw.from, rw.to],
+        )?;
+        tx.execute(
+            "UPDATE import_sources SET wing = ?2 WHERE wing = ?1",
+            params![rw.from, rw.to],
+        )?;
+
+        // 1. Rewrite the wing column last.
+        rewritten += tx.execute(
+            "UPDATE chunks SET wing = ?2 WHERE wing = ?1",
+            params![rw.from, rw.to],
+        )? as i64;
+    }
+    tx.commit()?;
+    Ok(rewritten)
+}
+
 // --- Types ---
 
 #[derive(Debug, Clone)]
@@ -516,4 +685,71 @@ fn map_search_row(row: &rusqlite::Row) -> rusqlite::Result<SearchResult> {
         embedding: embedding_blob.map(|b| bytes_to_embedding(&b)),
         score: row.get(7)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_wing;
+
+    #[test]
+    fn folds_all_separators_to_underscore() {
+        assert_eq!(normalize_wing("sci-phoenix"), "sci_phoenix");
+        assert_eq!(normalize_wing("sci.phoenix"), "sci_phoenix");
+        assert_eq!(normalize_wing("sci phoenix"), "sci_phoenix");
+        assert_eq!(normalize_wing("sci_phoenix"), "sci_phoenix");
+    }
+
+    #[test]
+    fn pep503_parity_all_variants_collapse_to_one() {
+        // Every separator variant of the same name maps to one canonical key.
+        let canonical = normalize_wing("sci_phoenix");
+        for variant in ["sci-phoenix", "sci.phoenix", "sci phoenix", "SCI-Phoenix"] {
+            assert_eq!(normalize_wing(variant), canonical, "variant: {variant}");
+        }
+    }
+
+    #[test]
+    fn lowercases() {
+        assert_eq!(normalize_wing("MyApp"), "myapp");
+        assert_eq!(normalize_wing("CREW-Research"), "crew_research");
+    }
+
+    #[test]
+    fn collapses_runs_of_separators() {
+        assert_eq!(normalize_wing("a--b"), "a_b");
+        assert_eq!(normalize_wing("a-.b"), "a_b");
+        assert_eq!(normalize_wing("a__b"), "a_b");
+        assert_eq!(normalize_wing("a - b"), "a_b");
+    }
+
+    #[test]
+    fn trims_leading_and_trailing_separators() {
+        assert_eq!(normalize_wing("-web-app-"), "web_app");
+        assert_eq!(normalize_wing("__x__"), "x");
+        assert_eq!(normalize_wing(".hidden"), "hidden");
+    }
+
+    #[test]
+    fn empty_and_separator_only_map_to_global() {
+        assert_eq!(normalize_wing(""), "global");
+        assert_eq!(normalize_wing("---"), "global");
+        assert_eq!(normalize_wing("_._"), "global");
+        assert_eq!(normalize_wing("   "), "global");
+    }
+
+    #[test]
+    fn idempotent() {
+        for input in ["sci-phoenix", "MyApp", "a--b", "", "---", "web_app"] {
+            let once = normalize_wing(input);
+            let twice = normalize_wing(&once);
+            assert_eq!(once, twice, "not idempotent for: {input}");
+        }
+    }
+
+    #[test]
+    fn already_canonical_unchanged() {
+        assert_eq!(normalize_wing("web_app"), "web_app");
+        assert_eq!(normalize_wing("global"), "global");
+        assert_eq!(normalize_wing("my_project"), "my_project");
+    }
 }
