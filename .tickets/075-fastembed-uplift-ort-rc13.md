@@ -1,7 +1,7 @@
 ---
 id: "075"
 title: "Uplift fastembed 4.9.1 -> 7.x (ort rc.13 + api-NN + ONNX RT 1.23)"
-status: in_progress
+status: done
 blocked_by: ["068"]
 priority: medium
 ---
@@ -175,19 +175,19 @@ handle with a logged gap or drop that target.
 
 ## Acceptance criteria
 
-- [ ] `cargo build --release` and `cargo install --path .` succeed on the new
+- [x] `cargo build --release` and `cargo install --path .` succeed on the new
       stack from a clean resolve (rustc >= 1.88)
-- [ ] Model loads (BGE-base-en-v1.5) against ONNX RT 1.28.x; `recall search`
+- [x] Model loads (BGE-base-en-v1.5) against ONNX RT 1.28.x; `recall search`
       returns sensible results. Offline `cargo build` confirms no build-time
       binary download.
-- [ ] Parity test run and recorded: max_abs < 1e-4 AND top-10 Jaccard >= 0.99
+- [x] Parity test run and recorded: max_abs < 1e-4 AND top-10 Jaccard >= 0.99
       (or a documented decision to re-embed if not)
-- [ ] All tests pass; golden-query suite re-baselined only if parity moved, with
+- [x] All tests pass; golden-query suite re-baselined only if parity moved, with
       rationale
-- [ ] `recall health` reports the new ONNX RT version; pre-flight expected-minor
+- [x] `recall health` reports the new ONNX RT version; pre-flight expected-minor
       check updated and verified against a bad-version DLL
-- [ ] Per-platform SHA-256 re-vendored for the new ORT archive (064 invariant)
-- [ ] Corpus re-embed decision recorded (needed / not needed, with parity evidence)
+- [x] Per-platform SHA-256 re-vendored for the new ORT archive (064 invariant)
+- [x] Corpus re-embed decision recorded (needed / not needed, with parity evidence)
 
 ## Notes / relations
 
@@ -196,3 +196,7 @@ handle with a logged gap or drop that target.
 - Pairs with **064** (per-platform SHA-256 for the DLL download — the uplift
   changes the DLL, so the pinned hashes change).
 - Research: `.scratch/research/ort-fastembed-compat.md` (version table, L1 sources).
+
+## Resolution (2026-10-02)
+
+Uplifted fastembed 4.9.1->7.1.0, ort/ort-sys =rc.9->=rc.13 (+api-24), ONNX RT 1.20.0->1.28.2 (ort rc.13 default line; 1.24 never released). Handled API breaks: OrtApiBase.GetVersionString bare fn, init_from Result + commit()->bool, embed(&mut self) via Mutex-wrapped model (keeps shared &Embedder, stays Sync), InitOptions->TextInitOptions, explicit ureq json feature. Re-vendored 4 platform hashes; Intel-macOS unsupported (compile_error). Added src/bin/parity_dump.rs; parity PASS => no re-embed. ADR 0003 + AGENTS.md updated. Deferred nothing. The whole ort cluster (049/064/068/075) is now closed.
