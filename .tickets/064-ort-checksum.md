@@ -1,7 +1,7 @@
 ---
 id: "064"
 title: "Verify ORT runtime download against pinned SHA-256 (H1 from 051)"
-status: in_progress
+status: done
 blocked_by: []
 priority: medium
 validation_criteria:
@@ -37,12 +37,19 @@ doesn't apply — the hash must be vendored per `ORT_VERSION`.
 
 ## Acceptance criteria
 
-- [ ] ORT download verifies a pinned SHA-256; mismatch aborts cleanly
-- [ ] Per-platform hashes vendored in the `ort_platform()` table
-- [ ] `cargo test` passes, `cargo clippy` clean
+- [x] ORT download verifies a pinned SHA-256; mismatch aborts cleanly
+- [x] Per-platform hashes vendored in the `ort_platform()` table
+- [x] `cargo test` passes, `cargo clippy` clean
 
 ## Validation criteria
 
 - Unit: ORT bytes vs pinned hash — match → ok, mismatch → err
 - Manual: obtain the real ORT v1.20.0 archive SHA-256 for this platform and
   confirm it matches the vendored constant
+
+## Resolution (2026-10-02)
+
+Replaced the >1MB heuristic with pinned per-platform SHA-256 verification of the archive before extraction (ort_platform -> (slug,ext,sha256); verify_archive_sha256 aborts on mismatch; v1.20.0 hashes vendored for all 5 platforms from Microsoft's release). Root-caused + fixed a latent extraction bug the size check had masked: ort_lib_entry_matches matched libonnxruntime_providers_shared.so (14KB sidecar, first in tar order) via the macOS infix fallback -> stub with no OrtGetApiBase poisoned the cache. Now sidecars (libonnxruntime_*) are rejected; a post-extraction size assertion stays as defense-in-depth. Likely the root cause of the ~50 Load-model telemetry failures 068 cites.
+
+### Verification
+1. ✓ ORT download mismatch aborts; pinned per-platform sha256 — "Unit tests (verify_archive_sha256 match/mismatch, 64-hex pinned-hash, providers-sidecar rejection) pass; 113 lib tests green, clippy clean. Manual: real ORT v1.20.0 linux-x64 archive SHA-256 from Microsoft (aa70d48b...5930) equals the vendored constant, stable on re-fetch. End-to-end: deleted cached lib -> forced download -> SHA verify passed -> extracted correct 16.5MB libonnxruntime.so.1.20.0 (not the 14KB sidecar) -> recall add stored OK."
