@@ -22,7 +22,7 @@ chain (verified 2026-10-02 from crates.io + pykeio/ort source,
 | 4.9.1 (current) | =2.0.0-rc.9 | =2.0.0-rc.9 | 1.20.x (hardcoded) |
 | 5.x | rc.10 | rc.10 | 1.22.0 |
 | 6.x | rc.13 | rc.13 | up to 1.23.x |
-| 7.1.0 (latest) | =rc.13 | =rc.13 | ships/downloads 1.28 default; fastembed pins **api-24 => ONNX RT >= 1.24** |
+| 7.1.0 (latest) | =rc.13 | =rc.13 | ort default = **1.28** (api-27); 1.24 NEVER released; standardize on **1.28.2** |
 
 The payoff of moving to fastembed 7.x / ort rc.13:
 - `api-NN` cargo features let recall pin the LOWEST ONNX RT API it needs (bge
@@ -67,6 +67,59 @@ a same-weights runtime point-bump. **Plan: run a parity test, re-embed only if
 rankings churn** (they shouldn't). Risk rises only if the bump drags in a
 re-exported `model.onnx` or a changed default graph-opt level — verify it doesn't.
 
+## CRITICAL correction (round 2, 2026-10-02) — target ONNX RT 1.28, not 1.24
+
+The "api-24 => ONNX RT 1.24" target in the matrix and earlier notes is **wrong and
+undeployable**:
+
+- **ONNX RT 1.24.0 was never released.** Microsoft's series skips it (verified:
+  `v1.24.0` asset => HTTP 404; `v1.25.0/1.27.0/1.28.0/1.28.2` => 302). "1.24" is a
+  dead download target.
+- **ort rc.13's actual default is api-27 / ONNX RT 1.28.0** (its
+  `ort-sys/build/download/dist.tsv` points at `ms@1.28.0`; the top-level `ort`
+  default features bump the compiled `ORT_API_VERSION` to 27). fastembed may
+  request `api-24`, but Cargo unions features so the effective floor is the
+  higher one; 1.28 satisfies everything (ORT C API is additive/monotonic — a
+  runtime with API 28 satisfies any build compiled against api-N, N<=28).
+
+**Decision: standardize recall on ONNX RT 1.28 (pin the latest 1.28 patch, e.g.
+1.28.2).** It exactly matches ort rc.13's default (zero API skew), is shipped +
+patched + stable, and backward-compat is free. Set `ORT_VERSION = "1.28.2"` (not
+1.24). The DECISION QUESTION in the prior proposal (1.24 vs 1.28) is resolved: 1.24
+was never a real option.
+
+**Archive layout holds at 1.28** (verified identical to 1.20): asset naming
+`onnxruntime-{slug}-{version}.{ext}` unchanged, internal
+`lib/libonnxruntime.so.<ver>` + `libonnxruntime_providers_shared.so` sidecar
+unchanged — recall's extractor (reject `libonnxruntime_*` sidecar, assert >1MB)
+stays valid. **Caveat:** no `osx-x86_64` asset exists at >=1.25 (macOS is arm64
+only now) — the `ort_platform()` `osx-x86_64` arm will have no archive to vendor;
+handle with a logged gap or drop that target.
+
+## Round-2 build gotchas (verified)
+
+- **MSRV**: fastembed 7.0 needs rust 1.88; this host is 1.96 — clear.
+- **`fastembed::Error` became a real enum in 6.0.0** (was an `anyhow::Error`
+  alias). Any code naming/downcasting it breaks — audit recall's error handling
+  of fastembed calls (likely fine; recall uses `?` into anyhow).
+- **download-binaries footgun**: `ort` `load-dynamic` does NOT disable
+  `download-binaries` — leaving default features on makes the BUILD hit pyke's
+  CDN. recall already uses `default-features = false` on both `ort` and
+  `fastembed`, so this is handled — but VERIFY with an offline build after the
+  bump (network-blocked `cargo build`).
+- **One potential compile break to check**: `read_ort_dylib_version`
+  (`src/embed.rs`) reads `ort_sys::OrtApiBase.GetVersionString` as `Option<fn>`
+  via `.ok_or_else`. The rc.10 ABI break flipped `Option<fn>` -> bare `fn` on the
+  `OrtApi` struct — confirm whether `OrtApiBase` (the small bootstrap struct, not
+  `OrtApi`) is still `Option`-typed in `ort-sys` rc.13; adjust the pre-flight if
+  it became a bare `fn`.
+- **golden_queries.rs asserts RANKINGS/keyword-presence, not float scores**
+  (`assert_relevant_in_top_k`) — robust to ~1e-6 drift; expect it to pass
+  unchanged, no re-baseline unless a keyword drops out of top-5.
+- **Two literals that FAIL CI if forgotten**: the health JSON snapshot
+  (`ort_version_expected: "1.20.0"`) and the embed unit test
+  `assert_eq!(expected_ort_minor(), "1.20")` — both must move to the new version.
+
 ## Why this is high blast radius (do NOT fold into 068)
 
 1. **Required native DLL moves 1.20 -> 1.24+.** recall's `src/embed.rs` hardcodes
@@ -93,13 +146,21 @@ re-exported `model.onnx` or a changed default graph-opt level — verify it does
       features (names unchanged). Keep `libloading = "0.8"` direct (pre-flight).
 - [ ] Rename `InitOptions` -> `TextInitOptions` at recall's call site (the old
       name is `#[deprecated]` in 7.x; compiles-with-warning otherwise).
-- [ ] Update `src/embed.rs` `ORT_VERSION` from `1.20.0` to the chosen ONNX RT
-      minor in [1.24, 1.28] (recommend matching ort rc.13's download default;
-      confirm the exact minor), and the download URL follows automatically.
-      Re-vendor the per-platform SHA-256 in `ort_platform()` for the new archive
-      (reuse 064's fetch-and-sha256sum method for all 5 platforms). Update the
-      pre-flight's expected-minor check (it derives from `ORT_VERSION`, so it
-      follows automatically — verify).
+- [ ] Update `src/embed.rs` `ORT_VERSION` from `1.20.0` to **`1.28.2`** (ort
+      rc.13's default line; 1.24 was never released). The URL, sha256 getter, and
+      pre-flight expected-minor all derive from it. Re-vendor the per-platform
+      SHA-256 in `ort_platform()` for the 1.28.2 archives (reuse 064's
+      fetch-and-sha256sum). **Handle the `osx-x86_64` arm**: no such asset exists
+      at >=1.25 (macOS arm64 only) — drop that target or mark it a logged gap.
+      Also update the `rc.9` literals in the pre-flight error message + doc
+      comment, the health-snapshot `ort_version_expected`, and the
+      `expected_ort_minor` unit test (`"1.20"` -> `"1.28"`).
+- [ ] Verify `ort_sys::OrtApiBase.GetVersionString` is still `Option<fn>` in
+      rc.13 (rc.10 flipped `OrtApi` fields to bare `fn`; confirm `OrtApiBase`);
+      fix `read_ort_dylib_version` if it changed.
+- [ ] Offline-build guard: after setting `default-features = false` on ort +
+      fastembed (already the case), run a network-blocked `cargo build` to confirm
+      no build-time CDN download (the load-dynamic + download-binaries footgun).
 - [ ] **Parity test before deciding re-embed.** Embed a fixed 200-500 string set
       on the old (1.20) and new (1.24+) runtime; assert max_abs < 1e-4 and
       top-10 Jaccard >= 0.99 (recipe in `.scratch/research/embedding-parity.md`).
@@ -116,8 +177,9 @@ re-exported `model.onnx` or a changed default graph-opt level — verify it does
 
 - [ ] `cargo build --release` and `cargo install --path .` succeed on the new
       stack from a clean resolve (rustc >= 1.88)
-- [ ] Model loads (BGE-base-en-v1.5) against the new ONNX RT (>= 1.24) via the
-      fastembed-dictated api-24 pin; `recall search` returns sensible results
+- [ ] Model loads (BGE-base-en-v1.5) against ONNX RT 1.28.x; `recall search`
+      returns sensible results. Offline `cargo build` confirms no build-time
+      binary download.
 - [ ] Parity test run and recorded: max_abs < 1e-4 AND top-10 Jaccard >= 0.99
       (or a documented decision to re-embed if not)
 - [ ] All tests pass; golden-query suite re-baselined only if parity moved, with
