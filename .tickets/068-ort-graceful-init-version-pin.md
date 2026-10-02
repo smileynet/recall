@@ -99,10 +99,15 @@ original 068 belongs to that ticket, not this one.)
 
 ## Notes / relations
 
-- **blocked_by 064** (ORT download SHA-256): 064 replaces the weak `<1MB`
-  corrupt-DLL heuristic that likely causes the 50 "Load model from D" failures —
-  a corrupt DLL poisons every model-load. 068's graceful-init work builds on a
-  trustworthy DLL, so 064 lands first. (068 itself said "do 064 first.")
+- **064 DONE (2026-10-02) — likely already resolves the "~50 Load model"
+  failures.** 064 replaced the weak `<1MB` heuristic with SHA-256 archive
+  verification AND root-caused the actual poisoning: the extractor was selecting
+  `libonnxruntime_providers_shared.so` (14KB sidecar) instead of the real lib,
+  caching a stub with no `OrtGetApiBase`. That stub is exactly what produces
+  model-load failures. So 068 should FIRST re-check telemetry — the load-error
+  rate may have already dropped. 068's remaining value is the graceful *error
+  message* (vs the current `OrtGetApiBase must be present` panic from ort) and
+  version logging, not the corrupt-DLL cause itself.
 - Supersedes/folds **049** (ort/cargo-install breakage) — same version surface.
 - r2 Open-Q resolved: on rc.9 there are no `api-NN` features to minimize; that
-  lever only appears after the fastembed uplift (deferred ticket).
+  lever only appears after the fastembed uplift (deferred ticket 075).
