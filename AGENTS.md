@@ -91,7 +91,7 @@ recall --version                                   # version info
 - Scheduled task: `RecallIngest` runs `recall sync` every 6h (`IgnoreNew`, ExecutionTimeLimit `PT3H` — above the 2h app-guard ceiling so recall's own watchdog fires first)
 - Corpus: ~44K chunks, 69 wings, 47/47 project coverage
 - Model: BGE-base-en-v1.5 (~416MB cached ONNX)
-- ONNX Runtime: load-dynamic (`~/.recall/lib/onnxruntime.dll`)
+- ONNX Runtime: load-dynamic (`~/.recall/lib/onnxruntime.dll`). A libloading pre-flight validates the cached dylib (`OrtGetApiBase` + `GetVersionString` minor == `ORT_VERSION`) before `ort` loads it, turning ort's internal panic on a bad DLL into a graceful domain error; `recall health` reports the loaded version. Version coupling (fastembed↔ort↔ort-sys↔ONNX RT) is pinned and documented in `.memory/adr/0003`.
 
 ### Updating
 
@@ -103,7 +103,7 @@ recall --version                                   # version info
 
 Scripts do: test → build (--locked) → backup → copy → verify → health check → report scheduled task status. Rolls back automatically if verification fails.
 
-Note: `cargo install --path .` is broken (ticket #049, ort dependency). Use the deploy scripts instead.
+Note: `cargo install --path .` works again as of ticket 068 (a direct `ort-sys = "=2.0.0-rc.9"` pin stops a fresh resolve drifting to the ABI-incompatible rc.10). The deploy scripts remain the recommended path for updating the running install (they test, back up, and health-check). See `.memory/adr/0003`.
 
 ## Performance (measured on production corpus)
 
