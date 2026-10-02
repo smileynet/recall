@@ -6,9 +6,9 @@ blocked_by: ["064"]
 priority: high
 validation_criteria:
   - "cargo install --path . succeeds on current stable Rust from a clean resolve (no lockfile)"
-  - "Embedder::new / ensure_ort_runtime returns a domain Err (not a panic) naming expected-vs-found ONNX RT version when the DLL is missing/incompatible, pointing at the deploy script"
-  - "ort/ort-sys pinned so a fresh resolve cannot drift off the fastembed-dictated version"
-  - "recall health logs the loaded ONNX RT version string"
+  - "A libloading pre-flight returns a domain Err (not a panic) naming expected-vs-found ONNX RT version when the DLL is missing/incompatible, with correct remediation (re-run or delete ~/.recall/lib/, NOT the deploy script)"
+  - "ort-sys pinned =2.0.0-rc.9 so a fresh resolve cannot drift to rc.10"
+  - "recall health logs the loaded ONNX RT version string (or 'not loaded')"
 ---
 
 # embed: ONNX RT robustness — resolve, graceful init, version pin + log
@@ -39,42 +39,97 @@ its registry `Cargo.toml`). So:
   (hardcoded `ONNXRUNTIME_VERSION="1.20.0"` in ort-sys/build.rs, mirrored by
   recall's `ORT_VERSION` constant in `src/embed.rs`).
 
-### The actual cargo-install break (folded from 049, reproduced 2026-10-02)
+### The actual cargo-install break (folded from 049, reproduced + root-caused 2026-10-02)
 
 A fresh resolve (deleted `Cargo.lock`) pulls `ort 2.0.0-rc.9` + **`ort-sys
-2.0.0-rc.10`** — a mismatch. The `=2.0.0-rc.9` exact pin (on both recall and
-fastembed) covers `ort` but NOT `ort-sys`; `ort` rc.9 depends on `ort-sys` with a
-loose range that admits rc.10. rc.10 is where the ABI break landed (`Option<fn>`
-→ bare `fn` on the raw OrtApi struct, verified from source), so ort rc.9's
-`.unwrap_or_else()` call sites fail to compile → 50+ type errors. The committed
-`Cargo.lock` pins `ort-sys` to rc.9, which is why `cargo build --release` (locked)
-works but `cargo install` / lockfile-free CI breaks.
+2.0.0-rc.10`** — a mismatch. **Root cause (verified from `ort` rc.9's registry
+`Cargo.toml`):** `ort` rc.9 requires `ort-sys = "2.0.0-rc.9"` — a *loose*
+requirement with NO `=`. Cargo's prerelease rule auto-upgrades a loose
+same-release prerelease range to newer prereleases, so `2.0.0-rc.9` admits
+`rc.10`. rc.10 carries the ABI break (`Option<fn>` → bare `fn` on the raw OrtApi
+struct), so ort rc.9's `.unwrap_or_else()` call sites fail to compile → 50+ type
+errors. recall's and fastembed's `=2.0.0-rc.9` exact pins cover `ort` but not
+`ort-sys`. The committed `Cargo.lock` pins `ort-sys` to rc.9, which is why
+`cargo build --release` (locked) works but `cargo install` / lockfile-free CI
+breaks.
 
-### Init behavior
+**Fix (verified correct):** a direct `ort-sys = "=2.0.0-rc.9"` in `[dependencies]`
+intersects ort's loose range down to the single point rc.9. A direct dep
+constrains the transitive resolve on a cold resolve (not just via the lockfile);
+`=` reliably excludes rc.10 (the auto-upgrade rule applies only to loose ranges,
+not `=` points); no "unused crate" warning on stable (that lint is nightly-only);
+and it cannot conflict with fastembed's own `=rc.9` (all requirements intersect
+to rc.9, and a future incompatible bump would fail loudly, not mispick).
 
-- load-dynamic resolves ONNX RT at runtime; the compat axis is `ORT_API_VERSION`
-  (the DLL minor), not the filename. `ort::init_from(path).commit()` returns
-  `Err` — it does NOT panic. recall's `ensure_ort_runtime_inner` already uses `?`
-  on it, so the panic risk is a weak corrupt-DLL heuristic (the `< 1MB` size
-  check in `src/embed.rs`), which **064** replaces with a SHA-256 verify. [r2 L4]
+### Init behavior (CORRECTED — the r2 assumption was wrong)
+
+The r2 note said "`init_from` returns Err, any panic is our `.unwrap()`." Verified
+against ort rc.9 source — **this is wrong**:
+
+- `init_from(path)` only stashes the path in a `OnceLock`. The dylib is dlopen'd
+  **lazily**, inside `ort::api()`, which first runs during `.commit()`
+  (`src/embed.rs:158`). So a missing/garbage/wrong-version DLL does NOT surface at
+  `init_from`; it hits `.commit()` or first use.
+- The load/symbol/version checks live inside ort's `OnceLock` closure as
+  `.expect("OrtGetApiBase must be present...")` / `.expect("GetVersionString...")`
+  / `panic!` — **panics, not `Err`s**, and ort exposes no fallible equivalent.
+  recall cannot turn them into a domain error through normal `?` handling. (This
+  is the exact panic the 064 stub reproduced, during `recall add`.)
+- recall's own ORT path has only 3 unwraps (`embed.rs:208` parent — infallible;
+  `:479` next — post-load) — none is the bad-DLL crash. The crash is inside ort.
+- Current size guards catch too-SMALL files only; a >1MB wrong-version/arch DLL
+  passes the guard and panics inside `.commit()`.
+
+**Therefore graceful init requires a libloading PRE-FLIGHT** (not Err-handling):
+before `ort::init_from`, dlopen the cached lib, check the `OrtGetApiBase` symbol
+exists, call `GetVersionString()`, compare the minor to the expected 20 (1.20.x),
+and return a domain `Err` with remediation on any failure. If Ok, ort's
+subsequent load takes the same successful path. (A `catch_unwind` backstop is
+possible but secondary, and only works if the release profile isn't
+`panic="abort"` — confirm that; the panic hook also prints to stderr first.)
 
 ## What to build
 
-- [ ] **Fix the resolve (folds 049).** Add a direct `ort-sys = "=2.0.0-rc.9"`
-      dependency in `Cargo.toml` (matching fastembed's pin) so a fresh resolve
-      cannot drift `ort-sys` to rc.10. Keep recall's existing direct
-      `ort = "=2.0.0-rc.9"`. Verify `cargo install --path .` succeeds from a
-      clean resolve, and `cargo build --release` still works.
-- [ ] **Graceful init.** Audit `ensure_ort_runtime` / `Embedder::new` for any
-      `.unwrap()`/`.expect()` on the ONNX RT path; ensure a missing/incompatible
-      DLL surfaces a domain `Err` that names expected (`ORT_VERSION`, 1.20.x) vs
-      found (from `GetVersionString`) and points at the deploy script that
-      installs the DLL. The `init_from(..).commit()?` already propagates — the
-      work is the error *message* quality and killing any remaining unwrap.
-- [ ] **Log the version.** `recall health` logs the loaded ONNX RT version string
-      (`GetVersionString()`), and the expected `ORT_VERSION`, for diagnosability.
-- [ ] **Document the fastembed↔ort↔ONNX-RT coupling** in `.memory/` (ADR) so the
-      next upgrade starts from the matrix, not a re-discovery.
+- [ ] **Fix the resolve (folds 049).** Add `ort-sys = "=2.0.0-rc.9"` to
+      `[dependencies]` in `Cargo.toml` (there is currently NO ort-sys line; `ort`
+      is at `Cargo.toml:12`). Keep the existing direct `ort = "=2.0.0-rc.9"`.
+      Verify `cargo generate-lockfile` resolves `ort-sys` to rc.9 (not rc.10),
+      `cargo install --path .` succeeds from a clean resolve, and
+      `cargo build --release` still works.
+- [ ] **Graceful init via pre-flight** (NOT Err-handling — see Init behavior).
+      Add `preflight_ort_dylib(path)` in `src/embed.rs`, called in
+      `ensure_ort_runtime_inner` just before `ort::init_from` (`embed.rs:158`):
+      dlopen via `libloading` → check `OrtGetApiBase` symbol → call
+      `GetVersionString()` → parse minor, compare to expected 20 → domain `Err`
+      on any failure, naming expected (`ORT_VERSION` 1.20.x) vs found and pointing
+      at remediation. Make `ORT_VERSION` (`embed.rs:10`) readable (pub or
+      accessor). Confirm the release profile isn't `panic="abort"` if adding a
+      `catch_unwind` backstop.
+- [ ] **Log the version.** Add `ort_version: Option<String>` to `HealthReport`
+      (`cli.rs:654-668`; `#[derive(Serialize)]` makes JSON automatic). Populate in
+      `build_health_report` (`cli.rs:670`) — reuse the pre-flight's
+      `GetVersionString` read so health does NOT need to construct an `Embedder`
+      (it never loads ORT today). Print a text line in `cmd_health` between the
+      Last-ingest and Last-log lines (~`cli.rs:637-642`). Report `None` as "not
+      loaded / not verified". Watch `tests/cli_contract.rs` + the health `--json`
+      snapshot.
+- [ ] **ADR 0003** (`.memory/adr/0003-ort-fastembed-coupling.md`) documenting the
+      fastembed↔ort↔ort-sys↔ONNX-RT coupling + the loose-prerelease-range pin
+      hazard, mirroring the 0001/0002 format (plain `#` header + bullet metadata,
+      no frontmatter; include `## Alternatives considered` for the pin mechanism).
+- [ ] **Reconcile the install-path docs.** When the resolve fix lands, update
+      `AGENTS.md:106` ("cargo install broken, #049") — it will be fixed. Related
+      stale mentions: ticket 050:17 ("broken indefinitely").
+
+### Remediation target (CORRECTED — the deploy scripts do NOT install the DLL)
+
+The deploy scripts (`scripts/deploy-local.{sh,ps1}`) only build+copy the `recall`
+binary; the ONNX RT DLL is auto-downloaded in-binary on first run
+(`ensure_ort_runtime` → `download_ort_runtime`), cached at `~/.recall/lib/`. So
+the graceful-init error must NOT say "run the deploy script to install the DLL"
+(no such step exists). Correct remediation to surface: re-run the command (the
+download self-heals a corrupt cache), or delete `~/.recall/lib/` to force a clean
+re-download. The AC wording is updated accordingly below.
 
 ## Deferred to a separate ticket (do NOT do here)
 
@@ -91,9 +146,11 @@ original 068 belongs to that ticket, not this one.)
       resolve (no `Cargo.lock`); `cargo build --release` still produces a working
       binary (folds 049 AC)
 - [ ] A fresh `cargo generate-lockfile` resolves `ort-sys` to rc.9, not rc.10
-- [ ] No panic on missing/incompatible ONNX RT DLL — graceful domain error with
-      expected-vs-found version and remediation pointing at the deploy script
-- [ ] `recall health` shows the loaded ONNX RT version
+- [ ] No panic on missing/incompatible/wrong-version ONNX RT DLL — a libloading
+      pre-flight returns a graceful domain error (expected-vs-found version) with
+      remediation: re-run the command, or delete `~/.recall/lib/` to force a clean
+      re-download (NOT "run the deploy script" — it does not install the DLL)
+- [ ] `recall health` shows the loaded ONNX RT version (or "not loaded")
 - [ ] All tests pass; golden-query embedding-parity suite unchanged (folds 049 AC)
 - [ ] ADR documents the fastembed/ort/ort-sys/ONNX-RT version coupling
 
