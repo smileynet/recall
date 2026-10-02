@@ -6,6 +6,7 @@ pub mod logging;
 pub mod migrate;
 pub mod scan;
 pub mod search;
+pub mod sqlite_source;
 pub mod store;
 pub mod telemetry;
 pub mod update;

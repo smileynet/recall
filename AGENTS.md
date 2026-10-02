@@ -15,7 +15,9 @@ src/
 ├── cli.rs            — clap derive commands + dispatch
 ├── store.rs          — SQLite layer (FTS5, scan_cache, embeddings, meta)
 ├── embed.rs          — fastembed-rs wrapper (configurable model, cache path)
-├── ingest.rs         — session parsing (v2/v3/codex) + chunking + ingestion
+├── ingest.rs         — session parsing (v2/v3-JSONL/codex + v3 SQLite) + chunking + ingestion
+│                       (SQLite source preferred when present; JSONL fallback)
+├── sqlite_source.rs  — read-only reader for kiro-cli v3 data.sqlite3 (conversations_v2)
 ├── search.rs         — hybrid search (BM25 + vector RRF fusion)
 ├── scan.rs           — stat-based file change detection (jwalk)
 ├── migrate.rs        — Python DB migration (direct embedding copy)
@@ -77,8 +79,9 @@ recall --version                                   # version info
 - **Text search:** FTS5 (BM25 ranking)
 - **Vector search:** fastembed-rs (BGE-base-en-v1.5, 768-dim, ONNX Runtime)
 - **Model cache:** `~/.recall/models/` (stable, not CWD-relative)
-- **Change detection:** stat cache (mtime+size → only hash if metadata differs)
-- **Concurrency:** exclusive file lock (fs2) — auto-releases on crash
+- **Change detection:** stat cache (mtime+size → only hash if metadata differs) for JSONL; `updated_at` watermark in `meta` (`kiro_sqlite_watermark_ms`) for the SQLite source
+- **Session sources:** kiro-cli v3 SQLite (`~/.local/share/kiro-cli/data.sqlite3`, opened READ-ONLY, preferred when present) with the legacy JSONL tree as fallback; SQLite chunks keyed `source=kiro-sqlite:<conversation_id>`. recall never takes a write lock on the kiro DB. See `.memory/adr/0001`, `0002`.
+- **Concurrency:** exclusive file lock (fs2) on the recall DB only — auto-releases on crash
 - **Crash safety:** WAL mode + batch commits + checkpoint after bulk ops
 - **Configuration:** RECALL_DB (path), RECALL_MODEL (bge-base/bge-small), FASTEMBED_CACHE_DIR
 

@@ -221,3 +221,102 @@ fn test_scan_fixtures_codex_detected() {
     });
     assert!(codex_detected, "scan should detect session-codex.jsonl");
 }
+
+// =============================================================================
+// kiro-cli v3 SQLite session source (ticket 074)
+// =============================================================================
+
+#[test]
+fn test_ingest_kiro_v3_sqlite_fixture() {
+    let tmp = TempDir::new().unwrap();
+    let conn = setup_db(&tmp);
+    let embedder = common::shared_embedder();
+
+    let db = fixtures_dir().join("kiro_v3.sqlite3");
+    assert!(db.is_file(), "fixture kiro_v3.sqlite3 must exist");
+
+    let chunks = recall::ingest::ingest_kiro_sqlite(&conn, embedder, &db)
+        .expect("sqlite ingest should succeed");
+    assert!(
+        chunks >= 2,
+        "expected chunks from 2 conversations, got {chunks}"
+    );
+
+    // Wing derived from the project dir (`key`), normalized.
+    let stats = store::corpus_stats(&conn).unwrap();
+    assert!(
+        stats.total_chunks >= 2,
+        "corpus should hold the ingested chunks"
+    );
+
+    // Content from the SQLite session is searchable.
+    let results = search::hybrid_search(&conn, embedder, "widget cache config", None, 5).unwrap();
+    assert!(
+        results.iter().any(|r| r.content.contains("cache_ttl")
+            || r.content.to_lowercase().contains("widget cache")),
+        "expected to find widget-cache content from the SQLite session"
+    );
+
+    // Source keys use the kiro-sqlite namespace (dedup / fallback separation).
+    let src: String = conn
+        .query_row(
+            "SELECT source FROM chunks WHERE source LIKE 'kiro-sqlite:%' LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("at least one kiro-sqlite source row");
+    assert!(src.starts_with("kiro-sqlite:"), "source was {src}");
+
+    // ToolUseResults user turns are NOT ingested as user prose; the assistant
+    // Response text IS. Spot-check the beta-service answer landed.
+    let results2 =
+        search::hybrid_search(&conn, embedder, "beta-service database", None, 5).unwrap();
+    assert!(
+        results2.iter().any(|r| r.content.contains("PostgreSQL")),
+        "expected assistant Response prose to be searchable"
+    );
+}
+
+#[test]
+fn test_kiro_v3_sqlite_incremental_watermark() {
+    let tmp = TempDir::new().unwrap();
+    let conn = setup_db(&tmp);
+    let embedder = common::shared_embedder();
+    let db = fixtures_dir().join("kiro_v3.sqlite3");
+
+    let first = recall::ingest::ingest_kiro_sqlite(&conn, embedder, &db).unwrap();
+    assert!(first >= 2);
+    let corpus_after_first = store::corpus_stats(&conn).unwrap().total_chunks;
+
+    // Second run: watermark advanced to the max updated_at. With the `>=`
+    // boundary (chosen to never drop an equal-ms row), the single boundary
+    // conversation is re-read, but the idempotent per-source sink
+    // (delete_chunks_by_source + re-insert) means the CORPUS SIZE is unchanged
+    // — no duplicates. This is the key incrementality guarantee: the bulk of
+    // conversations below the watermark are NOT re-embedded.
+    let second = recall::ingest::ingest_kiro_sqlite(&conn, embedder, &db).unwrap();
+    assert!(
+        second <= first,
+        "second run must not re-process everything (got {second} vs {first})"
+    );
+    let corpus_after_second = store::corpus_stats(&conn).unwrap().total_chunks;
+    assert_eq!(
+        corpus_after_first, corpus_after_second,
+        "idempotent sink: re-reading the boundary row must not duplicate chunks"
+    );
+
+    // Watermark persisted to meta at the max updated_at seen.
+    let wm = store::get_meta(&conn, "kiro_sqlite_watermark_ms")
+        .unwrap()
+        .expect("watermark should be stored");
+    assert_eq!(wm, "1788000003000", "watermark should equal max updated_at");
+}
+
+#[test]
+fn test_kiro_v3_sqlite_open_is_readonly() {
+    let db = fixtures_dir().join("kiro_v3.sqlite3");
+    let ro = recall::sqlite_source::open_readonly(&db).unwrap();
+    // A write must fail on a read-only connection — proves no write lock path.
+    let err = ro.execute("CREATE TABLE _probe (x)", []);
+    assert!(err.is_err(), "write on read-only connection must error");
+}

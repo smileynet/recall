@@ -29,6 +29,18 @@ _Avoid_: hybrid search (too vague about the fusion method)
 The `recall prime` output — a self-contained payload of recent facts + top retrieval results, injected at session start.
 _Avoid_: wake-up, context dump
 
+**kiro v3 (SQLite)**:
+The kiro-cli v3 session format stored in `conversations_v2` inside the kiro-cli data DB. Parsed by `parse_kiro_v3_sqlite`. This is the current real "v3".
+_Avoid_: conflating with `parse_kiro_v3` (below) — different thing.
+
+**parse_kiro_v3 (JSONL)**:
+An OLDER JSONL session variant keyed on `payload.type`, confusingly named "v3" in code but predating the SQLite v3 format. Not the kiro v3 SQLite format.
+_Avoid_: calling it "the v3 parser" without qualifying JSONL vs SQLite.
+
+**recall DB vs session-source DB**:
+Two distinct SQLite files. The *recall DB* (`RECALL_DB`, default `~/.recall/recall.sqlite3`) is recall's own store, opened read-write with the `fs2` process lock. The *session-source DB* (`~/.local/share/kiro-cli/data.sqlite3`) is kiro-cli's live conversation store, opened READ-ONLY and never locked by recall.
+_Avoid_: "the database" unqualified when both are in scope.
+
 ## Embedding Model
 
 The Python recall used bge-base-en-v1.5 (768-dim, stored as float32). The Rust binary matches this exactly. bge-small-en-v1.5 (384-dim) is supported via `RECALL_MODEL=bge-small` but embeddings are incompatible between models — switching requires full re-ingest. Quality difference between models is negligible (~3%) on our corpus; the choice is driven by migration compatibility.

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde_json::Value;
 
-use crate::{embed, recall_log, scan, store};
+use crate::{embed, recall_log, scan, sqlite_source, store};
 
 // --- Constants (matching Python recall) ---
 
@@ -134,20 +134,15 @@ fn run_ingest_with_embedder_lazy(
     shared_embedder: Option<&embed::Embedder>,
 ) -> Result<i32> {
     let dir = path.map(PathBuf::from).unwrap_or_else(default_sessions_dir);
-    if !dir.is_dir() {
+
+    // An explicitly supplied path that doesn't exist is a user error (preserve
+    // historic behavior). Auto-detect mode (path is None) tolerates a missing
+    // JSONL dir, since the SQLite source may be the only one present.
+    if path.is_some() && !dir.is_dir() {
         anyhow::bail!("session directory not found: {}", dir.display());
     }
 
     let conn = store::open_db()?;
-
-    // Phase 1: stat scan for changes
-    let changed = scan::scan_for_changes(&dir, &conn)?;
-    if changed.is_empty() {
-        return Ok(0);
-    }
-
-    recall_log!("  Ingesting: {}", dir.display());
-    recall_log!("  Files: {} changed of total", changed.len());
 
     // Load embedder lazily: use shared if provided, otherwise create new
     let owned_embedder;
@@ -158,6 +153,75 @@ fn run_ingest_with_embedder_lazy(
             &owned_embedder
         }
     };
+
+    let mut total_chunks = 0usize;
+
+    // Source A (preferred when present): kiro-cli v3 SQLite session DB.
+    // When a custom path is passed we are explicitly targeting a JSONL dir, so
+    // skip SQLite auto-detection in that case.
+    let sqlite_db = if path.is_none() {
+        sqlite_source::db_path_if_present()
+    } else {
+        None
+    };
+    let sqlite_present = sqlite_db.is_some();
+    if let Some(db_path) = sqlite_db {
+        total_chunks += ingest_sqlite_source(&conn, embedder, &db_path)?;
+    }
+
+    // Source B (fallback for v2 users): the legacy JSONL session tree. Read it
+    // only when SQLite is absent, to avoid double-ingesting dual-written
+    // sessions (ticket 074: prefer SQLite, JSONL fallback).
+    let jsonl_scanned = !sqlite_present && dir.is_dir();
+    if jsonl_scanned {
+        total_chunks += ingest_jsonl_source(&conn, embedder, &dir)?;
+    }
+
+    // Record model metadata
+    if total_chunks > 0 {
+        store::set_meta(&conn, "embedding_model", embedder.model().name())?;
+        store::set_meta(&conn, "embedding_dim", &embedder.dimensions().to_string())?;
+        // Checkpoint WAL after large batch
+        if total_chunks > 100 {
+            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        }
+    }
+
+    // Zero-data guard (ticket 074): if NEITHER source yielded anything, warn
+    // visibly and do NOT write the last_ingest marker — a silent "success" on
+    // empty input is the self-hiding memory gap this ticket exists to prevent.
+    if total_chunks == 0 {
+        if !sqlite_present && !dir.is_dir() {
+            recall_log!(
+                "  WARNING: no session source found (no kiro-cli SQLite DB at the \
+                 platform path, and JSONL dir {} does not exist). Nothing ingested; \
+                 last_ingest marker NOT updated.",
+                dir.display()
+            );
+        } else {
+            recall_log!("  No new sessions to ingest (sources present, nothing changed).");
+        }
+        return Ok(0);
+    }
+
+    write_last_ingest_marker();
+    Ok(0)
+}
+
+/// Ingest the legacy JSONL session tree. Returns the number of chunks stored.
+fn ingest_jsonl_source(
+    conn: &rusqlite::Connection,
+    embedder: &embed::Embedder,
+    dir: &Path,
+) -> Result<usize> {
+    // Phase 1: stat scan for changes
+    let changed = scan::scan_for_changes(dir, conn)?;
+    if changed.is_empty() {
+        return Ok(0);
+    }
+
+    recall_log!("  Ingesting: {}", dir.display());
+    recall_log!("  Files: {} changed of total", changed.len());
 
     // Phase 3: process changed files
     let mut total_chunks = 0;
@@ -171,18 +235,18 @@ fn run_ingest_with_embedder_lazy(
 
         let messages = parse_session_file(file_path)?;
         if messages.is_empty() {
-            scan::update_cache(&conn, file_path)?;
+            scan::update_cache(conn, file_path)?;
             continue;
         }
 
         let chunks = chunk_messages(&messages);
         if chunks.is_empty() {
-            scan::update_cache(&conn, file_path)?;
+            scan::update_cache(conn, file_path)?;
             continue;
         }
 
         // Determine wing from session metadata (cwd) or fallback to path
-        let wing = derive_wing_from_session(&dir, file_path);
+        let wing = derive_wing_from_session(dir, file_path);
 
         // Batch embed
         let texts: Vec<&str> = chunks.iter().map(|c| c.as_str()).collect();
@@ -190,11 +254,11 @@ fn run_ingest_with_embedder_lazy(
 
         // Store in transaction (delete old chunks first to avoid duplicates on re-ingest)
         conn.execute("BEGIN IMMEDIATE", [])?;
-        store::delete_chunks_by_source(&conn, &file_path.to_string_lossy())?;
+        store::delete_chunks_by_source(conn, &file_path.to_string_lossy())?;
         for (chunk, embedding) in chunks.iter().zip(embeddings.iter()) {
             let room = classify_room(chunk);
             store::insert_chunk(
-                &conn,
+                conn,
                 chunk,
                 &wing,
                 &room,
@@ -203,20 +267,10 @@ fn run_ingest_with_embedder_lazy(
                 embedding,
             )?;
         }
-        scan::update_cache(&conn, file_path)?;
+        scan::update_cache(conn, file_path)?;
         conn.execute("COMMIT", [])?;
 
         total_chunks += chunks.len();
-    }
-
-    // Record model metadata
-    if total_chunks > 0 {
-        store::set_meta(&conn, "embedding_model", embedder.model().name())?;
-        store::set_meta(&conn, "embedding_dim", &embedder.dimensions().to_string())?;
-        // Checkpoint WAL after large batch
-        if total_chunks > 100 {
-            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
-        }
     }
 
     recall_log!(
@@ -230,12 +284,96 @@ fn run_ingest_with_embedder_lazy(
         }
     );
 
-    // Write staleness marker
-    if total_chunks > 0 {
-        write_last_ingest_marker();
+    Ok(total_chunks)
+}
+
+/// Ingest kiro-cli v3 sessions from an explicit SQLite DB path, using a given
+/// recall connection and embedder. Public entry point for tests and callers
+/// that target a specific database rather than the auto-detected platform path.
+/// Returns the number of chunks stored.
+pub fn ingest_kiro_sqlite(
+    conn: &rusqlite::Connection,
+    embedder: &embed::Embedder,
+    db_path: &Path,
+) -> Result<usize> {
+    ingest_sqlite_source(conn, embedder, db_path)
+}
+
+/// Ingest kiro-cli v3 sessions from the read-only SQLite DB. Returns the number
+/// of chunks stored. Incremental by `updated_at` watermark stored in `meta`.
+fn ingest_sqlite_source(
+    conn: &rusqlite::Connection,
+    embedder: &embed::Embedder,
+    db_path: &Path,
+) -> Result<usize> {
+    const WATERMARK_KEY: &str = "kiro_sqlite_watermark_ms";
+
+    let ro = sqlite_source::open_readonly(db_path)?;
+    let watermark: i64 = store::get_meta(conn, WATERMARK_KEY)?
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    let rows = sqlite_source::read_since(&ro, watermark)?;
+    if rows.is_empty() {
+        return Ok(0);
     }
 
-    Ok(0)
+    recall_log!("  Ingesting: {} (kiro-cli v3 SQLite)", db_path.display());
+    recall_log!("  Conversations: {} newer than watermark", rows.len());
+
+    let mut total_chunks = 0;
+    let mut max_seen = watermark;
+    for row in &rows {
+        max_seen = max_seen.max(row.updated_at);
+
+        let messages = match parse_kiro_v3_sqlite(&row.value) {
+            Some(m) => m,
+            None => continue,
+        };
+        let chunks = chunk_messages(&messages);
+        if chunks.is_empty() {
+            continue;
+        }
+
+        // Wing from the project dir (`key`), routed through the single
+        // source of truth for wing naming.
+        let wing = store::normalize_wing(
+            Path::new(&row.key)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&row.key),
+        );
+        let source = format!("kiro-sqlite:{}", row.conversation_id);
+
+        let texts: Vec<&str> = chunks.iter().map(|c| c.as_str()).collect();
+        let embeddings = embedder.embed_batch(&texts)?;
+
+        conn.execute("BEGIN IMMEDIATE", [])?;
+        store::delete_chunks_by_source(conn, &source)?;
+        for (chunk, embedding) in chunks.iter().zip(embeddings.iter()) {
+            let room = classify_room(chunk);
+            store::insert_chunk(conn, chunk, &wing, &room, "session", &source, embedding)?;
+        }
+        conn.execute("COMMIT", [])?;
+
+        total_chunks += chunks.len();
+    }
+
+    // Advance the watermark only after all batches committed, to the max
+    // updated_at observed. The next run queries `>= max_seen`, re-reading at
+    // most the boundary row(s) sharing that ms; the idempotent sink absorbs
+    // the re-read without duplicating chunks (see ADR 0002).
+    if max_seen > watermark {
+        store::set_meta(conn, WATERMARK_KEY, &(max_seen).to_string())?;
+    }
+
+    recall_log!(
+        "  Done: {} conversations, {} chunks ingested (SQLite)",
+        rows.len(),
+        total_chunks
+    );
+
+    Ok(total_chunks)
 }
 
 /// Import markdown files from a directory into a wing.
@@ -489,6 +627,102 @@ fn parse_session_file(path: &Path) -> Result<Vec<Message>> {
     }
 
     Ok(Vec::new())
+}
+
+/// Parse a kiro-cli v3 SQLite `conversations_v2.value` JSON blob into messages.
+///
+/// Distinct from `parse_kiro_v3` (an older JSONL variant). Shape confirmed
+/// against the live DB (ticket 074 spike, 2026-10-02):
+/// - `history` is a list of turns; each turn has `user`, `assistant`.
+/// - `valid_history_range` is `[start, end]` with an **inclusive** end
+///   (`[0,2]` over a 3-turn history) — ingest `history[start..=end]`.
+/// - `user.content` is a tagged enum; only `{"Prompt":{"prompt":"..."}}` carries
+///   user prose. `ToolUseResults` / `CancelledToolUses` are tool plumbing — skip.
+/// - `assistant` is `{"ToolUse":{...}}` or `{"Response":{...}}`; both carry prose
+///   in `.content`. `ToolUse.tool_uses[].name` is summarized as `[tool: <name>]`
+///   to mirror `parse_kiro_v2`. `thinking` is dropped (redacted byte arrays).
+fn parse_kiro_v3_sqlite(value: &str) -> Option<Vec<Message>> {
+    let v: Value = serde_json::from_str(value).ok()?;
+    let history = v.get("history")?.as_array()?;
+
+    // Honor valid_history_range (inclusive end); fall back to the whole history.
+    let (start, end) = match v.get("valid_history_range").and_then(|r| r.as_array()) {
+        Some(r) if r.len() == 2 => {
+            let s = r[0].as_u64().unwrap_or(0) as usize;
+            let e = r[1].as_u64().unwrap_or(history.len() as u64) as usize;
+            (s, e)
+        }
+        _ => (0, history.len().saturating_sub(1)),
+    };
+
+    let mut messages = Vec::new();
+    for turn in history
+        .iter()
+        .skip(start)
+        .take(end.saturating_sub(start) + 1)
+    {
+        // User prose: only the Prompt variant.
+        if let Some(prompt) = turn
+            .get("user")
+            .and_then(|u| u.get("content"))
+            .and_then(|c| c.get("Prompt"))
+            .and_then(|p| p.get("prompt"))
+            .and_then(|t| t.as_str())
+        {
+            let text = prompt.trim();
+            if !text.is_empty() {
+                messages.push(Message {
+                    role: Role::User,
+                    text: text.to_string(),
+                });
+            }
+        }
+
+        // Assistant prose: ToolUse or Response, both carry `.content`.
+        if let Some(assistant) = turn.get("assistant").and_then(|a| a.as_object()) {
+            // The single present key is the variant name.
+            if let Some((variant, body)) = assistant.iter().next() {
+                let mut parts: Vec<String> = Vec::new();
+                if let Some(content) = body.get("content").and_then(|c| c.as_str()) {
+                    let t = content.trim();
+                    if !t.is_empty() {
+                        parts.push(t.to_string());
+                    }
+                }
+                // Mirror parse_kiro_v2's tool-use summary for ToolUse turns.
+                if variant == "ToolUse" {
+                    if let Some(uses) = body.get("tool_uses").and_then(|u| u.as_array()) {
+                        for use_ in uses {
+                            if let Some(name) = use_.get("name").and_then(|n| n.as_str()) {
+                                parts.push(format!("[tool: {}]", name));
+                            }
+                        }
+                    }
+                }
+                if !parts.is_empty() {
+                    let text = parts.join("\n");
+                    // Merge consecutive assistant messages (parity with other parsers).
+                    if let Some(last) = messages.last_mut() {
+                        if last.role == Role::Assistant {
+                            last.text.push('\n');
+                            last.text.push_str(&text);
+                            continue;
+                        }
+                    }
+                    messages.push(Message {
+                        role: Role::Assistant,
+                        text,
+                    });
+                }
+            }
+        }
+    }
+
+    if messages.len() >= 2 {
+        Some(messages)
+    } else {
+        None
+    }
 }
 
 /// Parse kiro-cli v3 JSONL: {id, timestamp, payload: {type: "user"|"assistant", content}}
