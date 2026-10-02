@@ -13,6 +13,11 @@ clap = { version = "4", features = ["derive"] }
 rusqlite = { version = "0.32", features = ["bundled", "vtab"] }
 fastembed = { version = "4", default-features = false, features = ["ort-load-dynamic", "hf-hub-rustls-tls"] }
 ort = { version = "=2.0.0-rc.9", features = ["load-dynamic", "ndarray"], default-features = false }
+# Pin ort-sys exactly: ort rc.9 requires it with a LOOSE range ("2.0.0-rc.9")
+# that Cargo's prerelease rule auto-upgrades to rc.10 on a fresh resolve. rc.10
+# is an ABI break (Option<fn> -> bare fn) and fails to compile against ort rc.9.
+# This exact pin is what unbreaks `cargo install` / lockfile-free CI. (ticket 068)
+ort-sys = "=2.0.0-rc.9"
 ureq = "2"
 flate2 = "1"
 tar = "0.4.45"

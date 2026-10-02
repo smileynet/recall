@@ -2246,6 +2246,7 @@ dependencies = [
  "jwalk",
  "lzma-rust2",
  "ort",
+ "ort-sys",
  "predicates",
  "regex",
  "rusqlite",
