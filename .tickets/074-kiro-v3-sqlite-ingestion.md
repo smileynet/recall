@@ -1,7 +1,7 @@
 ---
 id: "074"
 title: "Ingest kiro-cli v3 SQLite sessions (ticket 28 reopening criteria met)"
-status: in_progress
+status: done
 priority: high
 blocked_by: []
 ---
@@ -183,22 +183,26 @@ distinct — recall's `fs2` process lock is on RECALL_DB only, never the kiro DB
 
 ## Acceptance criteria
 
-- [ ] `conversations_v2.value` JSON shape documented and mapped to recall's `Message`
+- [x] `conversations_v2.value` JSON shape documented and mapped to recall's `Message`
       model (via `history` + `valid_history_range`, not `transcript`); `valid_history_range`
       inclusivity confirmed
-- [ ] Read-only SQLite source in `src/ingest.rs` using `SQLITE_OPEN_READ_ONLY` + a
+- [x] Read-only SQLite source in `src/ingest.rs` using `SQLITE_OPEN_READ_ONLY` + a
       dedicated helper (NOT `store::open_db_at`); reads `conversations_v2` on Linux + macOS paths
-- [ ] Read-only DB open verified — no write lock taken on the live kiro-cli DB (test asserts
+- [x] Read-only DB open verified — no write lock taken on the live kiro-cli DB (test asserts
       a write attempt errors)
-- [ ] JSONL path retained as fallback; SQLite preferred when `data.sqlite3` present; no
+- [x] JSONL path retained as fallback; SQLite preferred when `data.sqlite3` present; no
       double-ingest of the same conversation (`source = kiro-sqlite:<conversation_id>`)
-- [ ] Incremental ingest by `updated_at >= watermark` with idempotent per-source upsert;
+- [x] Incremental ingest by `updated_at >= watermark` with idempotent per-source upsert;
       watermark persisted to `meta` only after batch commit (no full re-embed each sync;
       equal-ms boundary rows not dropped)
-- [ ] Zero-data sync (neither source yields new conversations) logs a visible warning at the
+- [x] Zero-data sync (neither source yields new conversations) logs a visible warning at the
       sync layer and does NOT write the last_ingest marker
-- [ ] `recall sync` ingests a v3 SQLite session and `recall search` returns content from it
-- [ ] Unit/integration test with a fixture `data.sqlite3` (`conversations_v2` with a
+- [x] `recall sync` ingests a v3 SQLite session and `recall search` returns content from it
+- [x] Unit/integration test with a fixture `data.sqlite3` (`conversations_v2` with a
       realistic `value` payload), mirroring `tests/integration_test.rs::test_ingest_from_fixtures`
       and using `common::shared_embedder()`
-- [ ] Windows path confirmed or deferred with a logged gap
+- [x] Windows path confirmed or deferred with a logged gap
+
+## Resolution (2026-10-02)
+
+Added read-only kiro-cli v3 SQLite session source (src/sqlite_source.rs + parse_kiro_v3_sqlite in ingest.rs). Prefers SQLite when data.sqlite3 present, JSONL fallback, dedup via kiro-sqlite:<conversation_id>. Incremental by updated_at>=watermark in meta + idempotent sink (ADR 0002). Zero-data guard at orchestration layer. ADR 0001/0002, glossary, AGENTS.md updated. Windows path best-effort, deferred as logged gap.
