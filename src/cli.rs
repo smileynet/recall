@@ -243,7 +243,10 @@ fn command_name(cmd: &Commands) -> String {
 fn wing_from_cwd() -> String {
     std::env::current_dir()
         .ok()
-        .and_then(|p| p.file_name().map(|n| store::normalize_wing(&n.to_string_lossy())))
+        .and_then(|p| {
+            p.file_name()
+                .map(|n| store::normalize_wing(&n.to_string_lossy()))
+        })
         .unwrap_or_else(|| "global".to_string())
 }
 
@@ -258,7 +261,10 @@ fn cmd_migrate_wings(apply: bool, no_backup: bool) -> Result<i32> {
         return Ok(0);
     }
 
-    println!("Wing merge plan ({} wing(s) to rewrite):", plan.rewrites.len());
+    println!(
+        "Wing merge plan ({} wing(s) to rewrite):",
+        plan.rewrites.len()
+    );
     println!(
         "  distinct wings: {} -> {}",
         plan.distinct_wings_before, plan.distinct_wings_after
@@ -267,7 +273,10 @@ fn cmd_migrate_wings(apply: bool, no_backup: bool) -> Result<i32> {
     println!();
     for rw in &plan.rewrites {
         let collision_note = if rw.manifest_collisions > 0 {
-            format!(" ({} manifest collision(s), newest wins)", rw.manifest_collisions)
+            format!(
+                " ({} manifest collision(s), newest wins)",
+                rw.manifest_collisions
+            )
         } else {
             String::new()
         };
@@ -627,6 +636,16 @@ fn cmd_health(json: bool) -> Result<i32> {
         } else {
             println!("  Last ingest:   never");
         }
+        match &health.ort_version {
+            Some(v) => println!(
+                "  ONNX Runtime:  {} (expected {})",
+                v, health.ort_version_expected
+            ),
+            None => println!(
+                "  ONNX Runtime:  not loaded (expected {})",
+                health.ort_version_expected
+            ),
+        }
         if let Some(log_path) = recall::logging::current_log_path() {
             if let Ok(meta) = std::fs::metadata(&log_path) {
                 println!(
@@ -656,6 +675,8 @@ struct HealthReport {
     covered_projects: usize,
     missing_projects: Vec<String>,
     stale_wings: Vec<String>,
+    ort_version: Option<String>,
+    ort_version_expected: String,
 }
 
 fn build_health_report(db: &rusqlite::Connection) -> Result<HealthReport> {
@@ -724,6 +745,8 @@ fn build_health_report(db: &rusqlite::Connection) -> Result<HealthReport> {
         covered_projects: covered,
         missing_projects: missing,
         stale_wings: Vec::new(),
+        ort_version: recall::embed::ort_runtime_version(),
+        ort_version_expected: recall::embed::expected_ort_version().to_string(),
     })
 }
 

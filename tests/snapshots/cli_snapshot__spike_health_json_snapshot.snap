@@ -6,7 +6,7 @@ info:
     - health
     - "--json"
   env:
-    RECALL_DB: "C:\\Users\\uosmi\\AppData\\Local\\Temp\\.tmpS8jPtw\\test.sqlite3"
+    RECALL_DB: /tmp/.tmpILocuh/test.sqlite3
 ---
 success: true
 exit_code: 0
@@ -24,7 +24,9 @@ exit_code: 0
   "discoverable_projects": "[N]",
   "covered_projects": 0,
   "missing_projects": ["[FILTERED]"],
-  "stale_wings": []
+  "stale_wings": [],
+  "ort_version": "[ORT]",
+  "ort_version_expected": "1.20.0"
 }
 
 ----- stderr -----

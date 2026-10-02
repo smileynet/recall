@@ -38,6 +38,15 @@ fn spike_health_json_snapshot() {
         r#"(?s)"missing_projects": \[.*?\]"#,
         r#""missing_projects": ["[FILTERED]"]"#,
     );
+    // ort_version is environment-dependent (null when the ONNX RT lib isn't
+    // cached, a version string when it is) — normalize for a portable snapshot.
+    settings.add_filter(
+        r#""ort_version": (null|"[^"]*")"#,
+        r#""ort_version": "[ORT]""#,
+    );
+    // RECALL_DB is a per-run temp path (and OS-specific) — normalize so the
+    // snapshot is portable across machines and runs.
+    settings.add_filter(r"RECALL_DB: .*", "RECALL_DB: \"[DB]\"");
     let _guard = settings.bind_to_scope();
 
     insta_cmd::assert_cmd_snapshot!(recall_bin()

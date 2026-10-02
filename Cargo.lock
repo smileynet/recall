@@ -2244,6 +2244,7 @@ dependencies = [
  "insta",
  "insta-cmd",
  "jwalk",
+ "libloading",
  "lzma-rust2",
  "ort",
  "ort-sys",

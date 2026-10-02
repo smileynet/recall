@@ -154,8 +154,110 @@ fn ensure_ort_runtime_inner() -> Result<()> {
         download_ort_runtime(&lib_path)?;
     }
 
+    // Pre-flight: validate the dylib ourselves BEFORE handing it to ort. ort's
+    // load-dynamic path .expect()s on OrtGetApiBase / GetVersionString and
+    // panics (not Err) on a missing/incompatible DLL — a panic recall cannot
+    // catch via `?`. The pre-flight turns those into a graceful domain error.
+    preflight_ort_dylib(&lib_path)?;
+
     // Tell ort where to find the library (overrides System32 or PATH search)
     ort::init_from(lib_path.to_string_lossy().as_ref()).commit()?;
+    Ok(())
+}
+
+/// Expected ONNX Runtime major.minor that ort 2.0.0-rc.9 requires (`ORT_VERSION`
+/// minus patch). The loaded dylib's minor must match this.
+fn expected_ort_minor() -> &'static str {
+    // ORT_VERSION is "1.20.0" -> "1.20". Kept derived so a version bump needs
+    // only ORT_VERSION changed.
+    ORT_VERSION
+        .rsplit_once('.')
+        .map(|(mm, _)| mm)
+        .unwrap_or(ORT_VERSION)
+}
+
+/// The ONNX Runtime version recall expects (compile-time constant, for display).
+pub fn expected_ort_version() -> &'static str {
+    ORT_VERSION
+}
+
+/// Read the version string of the cached ONNX Runtime dylib, if present and
+/// readable, WITHOUT initializing `ort` (which would panic on a bad lib). Used
+/// by `recall health` for diagnosability. `None` means not cached or unreadable.
+pub fn ort_runtime_version() -> Option<String> {
+    let path = ort_lib_path().ok()?;
+    if !path.is_file() {
+        return None;
+    }
+    read_ort_dylib_version(&path).ok()
+}
+
+/// dlopen the dylib and read `OrtGetApiBase()->GetVersionString()` via
+/// `libloading`, returning the version string or a domain error. Shared by the
+/// pre-flight and the health reporter so both read the version the same way,
+/// never triggering `ort`'s internal panic path.
+fn read_ort_dylib_version(lib_path: &std::path::Path) -> Result<String> {
+    use std::ffi::{c_char, CStr};
+    // SAFETY: calling the stable ONNX Runtime C ABI entry points.
+    unsafe {
+        let lib = libloading::Library::new(lib_path)
+            .map_err(|e| anyhow::anyhow!("cannot load dylib: {e}"))?;
+        type GetApiBaseFn = unsafe extern "C" fn() -> *const ort_sys::OrtApiBase;
+        let get_api_base: libloading::Symbol<GetApiBaseFn> = lib
+            .get(b"OrtGetApiBase")
+            .map_err(|e| anyhow::anyhow!("missing OrtGetApiBase: {e}"))?;
+        let base = get_api_base();
+        if base.is_null() {
+            anyhow::bail!("OrtGetApiBase returned null");
+        }
+        let get_version = (*base)
+            .GetVersionString
+            .ok_or_else(|| anyhow::anyhow!("OrtApiBase has no GetVersionString"))?;
+        let vptr = get_version();
+        if vptr.is_null() {
+            anyhow::bail!("GetVersionString returned null");
+        }
+        Ok(CStr::from_ptr(vptr as *const c_char)
+            .to_string_lossy()
+            .into_owned())
+    }
+}
+
+/// Validate an ONNX Runtime shared library before `ort` loads it.
+///
+/// `ort`'s load-dynamic path looks up `OrtGetApiBase` and calls
+/// `GetVersionString()` with `.expect()`, so a missing symbol or wrong-version
+/// DLL panics inside the crate. We reproduce those two lookups via `libloading`
+/// and return a domain [`anyhow::Error`] with remediation instead, so a bad
+/// cache fails gracefully. On success, `ort`'s subsequent load takes the same
+/// good path.
+fn preflight_ort_dylib(lib_path: &std::path::Path) -> Result<()> {
+    let remediation = format!(
+        "the cached ONNX Runtime at {} is unusable. Re-run the command (recall \
+         re-downloads automatically), or delete {} to force a clean re-download.",
+        lib_path.display(),
+        lib_path
+            .parent()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "~/.recall/lib".to_string()),
+    );
+
+    let version = read_ort_dylib_version(lib_path)
+        .map_err(|e| anyhow::anyhow!("ONNX Runtime pre-flight failed: {e}. {remediation}"))?;
+
+    // ort rc.9 panics only when the loaded minor is LOWER than expected;
+    // require an exact minor match for a clear, early domain error.
+    let expected = expected_ort_minor();
+    let loaded_minor = version
+        .rsplit_once('.')
+        .map(|(mm, _)| mm)
+        .unwrap_or(&version);
+    if loaded_minor != expected {
+        anyhow::bail!(
+            "ONNX Runtime version mismatch: ort 2.0.0-rc.9 expects {expected}.x \
+             (ORT_VERSION {ORT_VERSION}), but the loaded dylib reports {version}. {remediation}"
+        );
+    }
     Ok(())
 }
 
@@ -503,6 +605,43 @@ impl Embedder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preflight_rejects_non_dylib_file() {
+        // A >1MB file that is not a valid shared library: must return a domain
+        // Err (not panic), and the message must carry remediation.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), vec![0u8; 2_000_000]).unwrap();
+        let err = preflight_ort_dylib(tmp.path()).unwrap_err().to_string();
+        assert!(
+            err.contains("ONNX Runtime") && err.to_lowercase().contains("re-run"),
+            "error must name ORT and give remediation: {err}"
+        );
+    }
+
+    #[test]
+    fn preflight_passes_on_cached_real_dylib() {
+        // Only runs if the real cached lib exists (dev/CI machines that have run
+        // recall at least once). Skips cleanly otherwise.
+        let path = match ort_lib_path() {
+            Ok(p) if p.is_file() => p,
+            _ => return,
+        };
+        // Guard: skip if the cached file is implausibly small (not the real lib).
+        if std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) < 1_000_000 {
+            return;
+        }
+        assert!(
+            preflight_ort_dylib(&path).is_ok(),
+            "pre-flight must accept the real cached ONNX Runtime at {}",
+            path.display()
+        );
+    }
+
+    #[test]
+    fn expected_ort_minor_derives_from_version() {
+        assert_eq!(expected_ort_minor(), "1.20");
+    }
 
     #[test]
     fn verify_archive_sha256_matches() {

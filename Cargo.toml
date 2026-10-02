@@ -18,6 +18,10 @@ ort = { version = "=2.0.0-rc.9", features = ["load-dynamic", "ndarray"], default
 # is an ABI break (Option<fn> -> bare fn) and fails to compile against ort rc.9.
 # This exact pin is what unbreaks `cargo install` / lockfile-free CI. (ticket 068)
 ort-sys = "=2.0.0-rc.9"
+# Pre-flight ONNX RT dylib validation (ticket 068): dlopen + check OrtGetApiBase
+# / GetVersionString before handing the lib to ort, which otherwise panics on a
+# bad DLL. Matches the version ort pulls transitively.
+libloading = "0.8"
 ureq = "2"
 flate2 = "1"
 tar = "0.4.45"
