@@ -1,7 +1,7 @@
 ---
 id: "064"
 title: "Verify ORT runtime download against pinned SHA-256 (H1 from 051)"
-status: open
+status: in_progress
 blocked_by: []
 priority: medium
 validation_criteria:
