@@ -1,7 +1,7 @@
 ---
 id: "068"
 title: "embed: ONNX RT robustness — fix cargo-install resolve, graceful init, version pin + log (folds 049)"
-status: in_progress
+status: done
 blocked_by: ["064"]
 priority: high
 validation_criteria:
@@ -142,17 +142,17 @@ original 068 belongs to that ticket, not this one.)
 
 ## Acceptance criteria
 
-- [ ] `cargo install --path .` succeeds on current stable Rust from a clean
+- [x] `cargo install --path .` succeeds on current stable Rust from a clean
       resolve (no `Cargo.lock`); `cargo build --release` still produces a working
       binary (folds 049 AC)
-- [ ] A fresh `cargo generate-lockfile` resolves `ort-sys` to rc.9, not rc.10
-- [ ] No panic on missing/incompatible/wrong-version ONNX RT DLL — a libloading
+- [x] A fresh `cargo generate-lockfile` resolves `ort-sys` to rc.9, not rc.10
+- [x] No panic on missing/incompatible/wrong-version ONNX RT DLL — a libloading
       pre-flight returns a graceful domain error (expected-vs-found version) with
       remediation: re-run the command, or delete `~/.recall/lib/` to force a clean
       re-download (NOT "run the deploy script" — it does not install the DLL)
-- [ ] `recall health` shows the loaded ONNX RT version (or "not loaded")
-- [ ] All tests pass; golden-query embedding-parity suite unchanged (folds 049 AC)
-- [ ] ADR documents the fastembed/ort/ort-sys/ONNX-RT version coupling
+- [x] `recall health` shows the loaded ONNX RT version (or "not loaded")
+- [x] All tests pass; golden-query embedding-parity suite unchanged (folds 049 AC)
+- [x] ADR documents the fastembed/ort/ort-sys/ONNX-RT version coupling
 
 ## Notes / relations
 
@@ -168,3 +168,13 @@ original 068 belongs to that ticket, not this one.)
 - Supersedes/folds **049** (ort/cargo-install breakage) — same version surface.
 - r2 Open-Q resolved: on rc.9 there are no `api-NN` features to minimize; that
   lever only appears after the fastembed uplift (deferred ticket 075).
+
+## Resolution (2026-10-02)
+
+Folded 049. (1) Pinned ort-sys =2.0.0-rc.9 directly (root cause: ort rc.9's loose ort-sys range auto-upgraded to the ABI-incompatible rc.10 on fresh resolve) - unbreaks cargo install. (2) Added libloading pre-flight (read_ort_dylib_version + preflight_ort_dylib) before ort::init_from: dlopen, check OrtGetApiBase + GetVersionString minor vs ORT_VERSION, domain Err with remediation on failure - ort otherwise panics internally (lazy, at commit()), uncatchable via ?. (3) recall health reports loaded ONNX RT version (shared reader, never triggers ort panic). (4) ADR 0003 documents the coupling; reconciled the stale AGENTS.md cargo-install-broken note. 064's sidecar fix likely already dropped the ~50 Load-model failures; this adds graceful degradation + diagnosability on top.
+
+### Verification
+1. ✓ cargo install --path . succeeds on current stable Rust from a clean resolve (no lockfile) — "cargo install clean-resolve: deleting Cargo.lock + cargo generate-lockfile resolves ort-sys to rc.9 (was rc.10); fresh graph builds; cargo build --release unaffected. 116 lib tests + all integration suites green."
+2. ✓ A libloading pre-flight returns a domain Err (not a panic) naming expected-vs-found ONNX RT version when the DLL is missing/incompatible, with correct remediation (re-run or delete ~/.recall/lib/, NOT the deploy script) — "Pre-flight: preflight_rejects_non_dylib_file proves a >1MB non-dylib returns a domain Err (no panic) with remediation (re-run / delete ~/.recall/lib/, not the deploy script); preflight_passes_on_cached_real_dylib proves the real lib passes; stub-file run self-heals via the cache check before pre-flight. No panic='abort' in release profile."
+3. ✓ ort-sys pinned =2.0.0-rc.9 so a fresh resolve cannot drift to rc.10 — "ort-sys pinned =2.0.0-rc.9 in Cargo.toml; fresh resolve verified to pick rc.9."
+4. ✓ recall health logs the loaded ONNX RT version string (or 'not loaded') — "recall health shows 'ONNX Runtime: 1.20.0 (expected 1.20.0)' in text and ort_version/ort_version_expected in --json (verified live); snapshot updated + portable; reports 'not loaded' when absent."
