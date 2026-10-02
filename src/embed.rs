@@ -9,39 +9,71 @@ use std::sync::OnceLock;
 /// The ONNX Runtime version required by ort 2.0.0-rc.9.
 const ORT_VERSION: &str = "1.20.0";
 
-/// Platform-specific ONNX Runtime release: the archive name slug and its
-/// extension. Single `#[cfg]` cascade — the download URL and (in ticket 051) the
-/// pinned SHA-256 both key off this, so a version bump touches only `ORT_VERSION`.
-fn ort_platform() -> (&'static str, &'static str) {
+/// Platform-specific ONNX Runtime release: the archive name slug, its extension,
+/// and the SHA-256 of the published archive. Single `#[cfg]` cascade — the
+/// download URL, extraction, and the pinned hash all key off this, so a version
+/// bump touches only `ORT_VERSION` and this table.
+///
+/// Hashes are vendored per `ORT_VERSION` from Microsoft's GitHub release
+/// (`github.com/microsoft/onnxruntime/releases`). To re-vendor on a version
+/// bump: download `onnxruntime-{slug}-{ORT_VERSION}.{ext}` for each platform and
+/// record `sha256sum`. Values below are for ONNX Runtime v1.20.0, obtained
+/// 2026-10-02 directly from the release assets.
+fn ort_platform() -> (&'static str, &'static str, &'static str) {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     {
-        ("win-x64", "zip")
+        (
+            "win-x64",
+            "zip",
+            "b372de85cedd9387a0d4386b982265e8420e5bcc2f29394317e76525b832942e",
+        )
     }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
-        ("linux-x64", "tgz")
+        (
+            "linux-x64",
+            "tgz",
+            "aa70d48b22e264b82e83f63245b51ddc9a47ae4a3a66903efaff1ba68b7b5930",
+        )
     }
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     {
-        ("osx-x86_64", "tgz")
+        (
+            "osx-x86_64",
+            "tgz",
+            "d28e603b47b74050f2c30a7069bf3fb371cfba7205d7771f22cabc7b02953757",
+        )
     }
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
-        ("osx-arm64", "tgz")
+        (
+            "osx-arm64",
+            "tgz",
+            "2bcfaafa9ff0a3a94f78e3af2f135ffde5bb2d79b08e83a50dbc450b0d20ddae",
+        )
     }
     #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
     {
-        ("linux-aarch64", "tgz")
+        (
+            "linux-aarch64",
+            "tgz",
+            "b4d7c6e2c45f8edabe5d28e9bc59ec8d5a4a4af36660cda16e94b2ad85f2a52a",
+        )
     }
 }
 
 /// Platform-specific download URL for ONNX Runtime, derived from `ORT_VERSION`.
 fn ort_download_url() -> String {
-    let (slug, ext) = ort_platform();
+    let (slug, ext, _sha) = ort_platform();
     format!(
         "https://github.com/microsoft/onnxruntime/releases/download/v{v}/onnxruntime-{slug}-{v}.{ext}",
         v = ORT_VERSION,
     )
+}
+
+/// The pinned SHA-256 of this platform's ONNX Runtime archive.
+fn ort_archive_sha256() -> &'static str {
+    ort_platform().2
 }
 
 /// Platform-specific library filename.
@@ -165,6 +197,11 @@ fn download_ort_runtime(target_path: &PathBuf) -> Result<()> {
         std::io::Read::read_to_end(&mut reader, &mut body)?;
     }
 
+    // Verify the downloaded archive against the pinned per-platform SHA-256
+    // BEFORE extracting. A truncated or tampered archive aborts here rather than
+    // poisoning every later command. Replaces the old `>1MB` size heuristic.
+    verify_archive_sha256(&body, ort_archive_sha256())?;
+
     // Extract the library from the archive to a temp file in the same dir, then
     // atomically rename. A crash mid-extract leaves the temp file, not a
     // truncated final file that would poison every later command.
@@ -181,11 +218,17 @@ fn download_ort_runtime(target_path: &PathBuf) -> Result<()> {
         extract_lib_from_tgz(&body, lib_name, &tmp_path)?;
     }
 
-    // Validate the extracted library is a plausible size before committing.
+    // Defense-in-depth: the SHA-256 above guarantees archive integrity, but the
+    // extractor still selects an entry by name — a sanity check that we pulled a
+    // real multi-MB runtime (not a tiny sidecar/symlink) catches any matcher
+    // mis-selection before it poisons the cache. ORT runtimes are >1MB on every
+    // platform; the smallest sidecar we must not accept is ~14KB.
     let extracted_len = std::fs::metadata(&tmp_path)?.len();
     anyhow::ensure!(
         extracted_len >= 1_000_000,
-        "extracted ONNX Runtime too small ({} bytes) — likely corrupt",
+        "extracted ONNX Runtime library is implausibly small ({} bytes) — the \
+         archive verified but the wrong entry was selected from it (likely a \
+         sidecar or symlink). This is a bug in ort_lib_entry_matches.",
         extracted_len
     );
 
@@ -193,6 +236,26 @@ fn download_ort_runtime(target_path: &PathBuf) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("failed to persist ONNX Runtime: {}", e))?;
 
     eprintln!("  Cached at: {}", target_path.display());
+    Ok(())
+}
+
+/// Verify downloaded archive bytes against a pinned lowercase-hex SHA-256.
+/// Mismatch aborts with both hashes named. The pinned value is vendored per
+/// `ORT_VERSION` in `ort_platform()`.
+fn verify_archive_sha256(bytes: &[u8], expected: &str) -> Result<()> {
+    use sha2::{Digest, Sha256};
+    let actual = format!("{:x}", Sha256::digest(bytes));
+    if !actual.eq_ignore_ascii_case(expected) {
+        anyhow::bail!(
+            "ONNX Runtime archive checksum mismatch: expected {}, got {} \
+             — refusing to install (re-run to retry the download; if this \
+             persists, the pinned hash in ort_platform() may be stale for \
+             ORT v{})",
+            expected,
+            actual,
+            ORT_VERSION
+        );
+    }
     Ok(())
 }
 
@@ -236,6 +299,15 @@ fn ort_lib_entry_matches(path: &str, filename: &str, lib_name: &str, entry_size:
     if entry_size == 0 || path.contains(".dSYM") {
         return false;
     }
+    // Reject sidecar libraries shipped alongside the real runtime — notably
+    // `libonnxruntime_providers_shared.so` (Linux), which starts with
+    // `libonnxruntime` and ends with `.so`, so the infix fallback below would
+    // otherwise match it (it appears before the real lib in tar order). The
+    // real library's version marker is set off by `.` (`.so.1.20.0`) or by the
+    // bare name; the providers libs use `_` after `libonnxruntime`.
+    if filename.starts_with("libonnxruntime_") {
+        return false;
+    }
     if filename == lib_name || filename.starts_with(lib_name) {
         return true;
     }
@@ -244,7 +316,9 @@ fn ort_lib_entry_matches(path: &str, filename: &str, lib_name: &str, entry_size:
         .extension()
         .and_then(|e| e.to_str());
     match ext {
-        Some(ext) => filename.starts_with("libonnxruntime") && filename.ends_with(&format!(".{ext}")),
+        Some(ext) => {
+            filename.starts_with("libonnxruntime") && filename.ends_with(&format!(".{ext}"))
+        }
         None => false,
     }
 }
@@ -431,9 +505,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn verify_archive_sha256_matches() {
+        // Known vector: sha256("") and sha256("abc").
+        let empty = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        assert!(verify_archive_sha256(b"", empty).is_ok());
+        let abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        assert!(verify_archive_sha256(b"abc", abc).is_ok());
+        // Case-insensitive compare.
+        assert!(verify_archive_sha256(b"abc", &abc.to_uppercase()).is_ok());
+    }
+
+    #[test]
+    fn verify_archive_sha256_rejects_mismatch() {
+        let wrong = "0000000000000000000000000000000000000000000000000000000000000000";
+        let err = verify_archive_sha256(b"abc", wrong)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("checksum mismatch"), "msg: {err}");
+        assert!(err.contains(wrong), "error names the expected hash: {err}");
+    }
+
+    #[test]
+    fn ort_pinned_hash_is_64_hex() {
+        let sha = ort_archive_sha256();
+        assert_eq!(sha.len(), 64, "sha256 hex must be 64 chars: {sha}");
+        assert!(
+            sha.chars().all(|c| c.is_ascii_hexdigit()),
+            "sha must be hex: {sha}"
+        );
+    }
+
+    #[test]
     fn ort_url_derives_from_version() {
         let url = ort_download_url();
-        let (slug, ext) = ort_platform();
+        let (slug, ext, _sha) = ort_platform();
         // URL is built from ORT_VERSION + platform table — no bare version literal.
         assert!(
             url.contains(&format!("v{}/", ORT_VERSION)),
@@ -455,7 +560,7 @@ mod tests {
 
     #[test]
     fn ort_platform_ext_is_zip_or_tgz() {
-        let (_slug, ext) = ort_platform();
+        let (_slug, ext, _sha) = ort_platform();
         assert!(matches!(ext, "zip" | "tgz"), "unexpected ext: {ext}");
     }
 
@@ -504,6 +609,20 @@ mod tests {
             "libonnxruntime.so",
             "libonnxruntime.so",
             0,
+        ));
+    }
+
+    #[test]
+    fn ort_lib_entry_matches_rejects_providers_sidecar() {
+        // libonnxruntime_providers_shared.so has data and ends with `.so`, so the
+        // infix fallback would wrongly match it. It must be rejected — it ships
+        // BEFORE the real lib in tar order, so matching it poisons the cache with
+        // a ~14KB file lacking OrtGetApiBase (ticket 064 field finding).
+        assert!(!ort_lib_entry_matches(
+            "./onnxruntime-linux-x64-1.20.0/lib/libonnxruntime_providers_shared.so",
+            "libonnxruntime_providers_shared.so",
+            "libonnxruntime.so",
+            14_632,
         ));
     }
 
