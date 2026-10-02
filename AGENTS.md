@@ -103,7 +103,7 @@ recall --version                                   # version info
 
 Scripts do: test → build (--locked) → backup → copy → verify → health check → report scheduled task status. Rolls back automatically if verification fails.
 
-Note: `cargo install --path .` works again as of ticket 068 (a direct `ort-sys = "=2.0.0-rc.9"` pin stops a fresh resolve drifting to the ABI-incompatible rc.10). The deploy scripts remain the recommended path for updating the running install (they test, back up, and health-check). See `.memory/adr/0003`.
+Note: `cargo install --path .` works from a clean resolve. recall directly pins `ort`/`ort-sys` to the fastembed-dictated version (currently `=2.0.0-rc.13`, matching fastembed 7.1.0) so a lockfile-free resolve can't drift to an ABI-incompatible pre-release (the rc.9→rc.10 drift that originally broke it, ticket 068). Requires rust ≥ 1.88 (fastembed 7 MSRV). The deploy scripts remain the recommended path for updating the running install (they test, back up, and health-check). See `.memory/adr/0003`.
 
 ## Performance (measured on production corpus)
 

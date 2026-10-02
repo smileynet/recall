@@ -65,3 +65,32 @@ in a way that is easy to get wrong:
 - The coupling is documented, so the ticket-075 uplift starts from this matrix
   rather than rediscovering it. Any ONNX RT version bump MUST update
   `ORT_VERSION` AND re-vendor the per-platform SHA-256 hashes (ticket 064).
+
+## Update — ticket 075 (2026-10-02): uplift to fastembed 7.1.0 / ort rc.13
+
+recall moved off the rc.9 line onto the maintained one. Post-uplift matrix:
+
+| layer | before (068) | after (075) |
+|-------|--------------|-------------|
+| fastembed | 4.9.1 | 7.1.0 |
+| ort / ort-sys | =2.0.0-rc.9 | =2.0.0-rc.13 |
+| ort features | load-dynamic, ndarray | + `api-24` (matches fastembed's pin) |
+| ONNX Runtime | 1.20.0 | 1.28.2 |
+
+Notes carried forward:
+- fastembed 7.1.0 exact-pins `ort =2.0.0-rc.13` with `["ndarray","std","api-24"]`;
+  recall's direct `ort`/`ort-sys` pins match. ort is still not independently
+  choosable — it tracks fastembed.
+- **ONNX RT 1.24 was never released** (Microsoft's series skips 1.23→1.25); the
+  api-24 floor is satisfied by 1.28, which is ort rc.13's own download default.
+- ABI: ort-sys rc.13 made `OrtApiBase.GetVersionString` a bare `fn` (was
+  `Option<fn>`); the pre-flight calls it directly now.
+- API: fastembed 7's `TextEmbedding::embed` takes `&mut self` → recall wraps the
+  model in a `Mutex` to keep the shared `&Embedder` API and stay `Sync`.
+  `InitOptions` → `TextInitOptions` (old name deprecated). MSRV → rust 1.88.
+- **Embedding parity verified (no corpus re-embed):** 1.20 vs 1.28 on
+  BGE-base-en-v1.5 measured max_abs = 1.9e-7, top-1 agreement 1.000, top-3
+  Jaccard 1.000 (`src/bin/parity_dump.rs`). Same weights + a runtime point-bump
+  do not move rankings.
+- `osx-x86_64` (Intel macOS) is unsupported at ORT ≥1.25 (no asset); that
+  `ort_platform()` arm is a `compile_error!`.

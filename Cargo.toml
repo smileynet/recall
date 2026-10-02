@@ -11,18 +11,18 @@ categories = ["command-line-utilities", "text-processing"]
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 rusqlite = { version = "0.32", features = ["bundled", "vtab"] }
-fastembed = { version = "4", default-features = false, features = ["ort-load-dynamic", "hf-hub-rustls-tls"] }
-ort = { version = "=2.0.0-rc.9", features = ["load-dynamic", "ndarray"], default-features = false }
-# Pin ort-sys exactly: ort rc.9 requires it with a LOOSE range ("2.0.0-rc.9")
-# that Cargo's prerelease rule auto-upgrades to rc.10 on a fresh resolve. rc.10
-# is an ABI break (Option<fn> -> bare fn) and fails to compile against ort rc.9.
-# This exact pin is what unbreaks `cargo install` / lockfile-free CI. (ticket 068)
-ort-sys = "=2.0.0-rc.9"
+fastembed = { version = "7", default-features = false, features = ["ort-load-dynamic", "hf-hub-rustls-tls"] }
+ort = { version = "=2.0.0-rc.13", features = ["load-dynamic", "ndarray", "api-24"], default-features = false }
+# Pin ort-sys exactly to match ort. ort rc.13 pins ort-sys exactly, but a direct
+# pin here keeps the resolve stable and documents the coupling (ADR 0003). The
+# loose-range drift that bit rc.9->rc.10 (ticket 068) does not recur at rc.13,
+# but the explicit pin is defense-in-depth for lockfile-free resolves.
+ort-sys = "=2.0.0-rc.13"
 # Pre-flight ONNX RT dylib validation (ticket 068): dlopen + check OrtGetApiBase
 # / GetVersionString before handing the lib to ort, which otherwise panics on a
 # bad DLL. Matches the version ort pulls transitively.
 libloading = "0.8"
-ureq = "2"
+ureq = { version = "2", features = ["json"] }
 flate2 = "1"
 tar = "0.4.45"
 lzma-rust2 = { version = "=0.20.1", default-features = false, features = ["std", "xz", "encoder"] }

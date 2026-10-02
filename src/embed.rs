@@ -1,13 +1,15 @@
 use anyhow::{Context, Result};
-use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
 // ─── ONNX Runtime management (load-dynamic) ─────────────────────────────────
 
-/// The ONNX Runtime version required by ort 2.0.0-rc.9.
-const ORT_VERSION: &str = "1.20.0";
+/// The ONNX Runtime version required by ort 2.0.0-rc.13 (its default download
+/// line; matches the api-24 feature floor). Re-vendor the per-platform SHA-256
+/// in `ort_platform()` whenever this changes.
+const ORT_VERSION: &str = "1.28.2";
 
 /// Platform-specific ONNX Runtime release: the archive name slug, its extension,
 /// and the SHA-256 of the published archive. Single `#[cfg]` cascade — the
@@ -17,15 +19,18 @@ const ORT_VERSION: &str = "1.20.0";
 /// Hashes are vendored per `ORT_VERSION` from Microsoft's GitHub release
 /// (`github.com/microsoft/onnxruntime/releases`). To re-vendor on a version
 /// bump: download `onnxruntime-{slug}-{ORT_VERSION}.{ext}` for each platform and
-/// record `sha256sum`. Values below are for ONNX Runtime v1.20.0, obtained
+/// record `sha256sum`. Values below are for ONNX Runtime v1.28.2, obtained
 /// 2026-10-02 directly from the release assets.
+///
+/// Note: Microsoft stopped shipping an `osx-x86_64` (Intel macOS) asset at ONNX
+/// Runtime >= 1.25 — that target is unsupported on the current ORT line.
 fn ort_platform() -> (&'static str, &'static str, &'static str) {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     {
         (
             "win-x64",
             "zip",
-            "b372de85cedd9387a0d4386b982265e8420e5bcc2f29394317e76525b832942e",
+            "c4eedd29489d5feca21866d054638416f3655bf6b18851b3b6b85c8313e95c35",
         )
     }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -33,23 +38,25 @@ fn ort_platform() -> (&'static str, &'static str, &'static str) {
         (
             "linux-x64",
             "tgz",
-            "aa70d48b22e264b82e83f63245b51ddc9a47ae4a3a66903efaff1ba68b7b5930",
+            "d7209b8751b27b862b0c76332c2e20e203396edb5dab700ecf4bb485cf147415",
         )
     }
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     {
-        (
-            "osx-x86_64",
-            "tgz",
-            "d28e603b47b74050f2c30a7069bf3fb371cfba7205d7771f22cabc7b02953757",
-        )
+        // ONNX Runtime no longer ships an Intel-macOS binary (>= 1.25). Fail at
+        // compile time with a clear message rather than 404 at runtime.
+        compile_error!(
+            "recall does not support Intel macOS (x86_64): ONNX Runtime stopped \
+             publishing osx-x86_64 binaries at v1.25+. Use an arm64 (Apple \
+             Silicon) macOS build."
+        );
     }
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
         (
             "osx-arm64",
             "tgz",
-            "2bcfaafa9ff0a3a94f78e3af2f135ffde5bb2d79b08e83a50dbc450b0d20ddae",
+            "c4fceacfc53765d0869dc9180c31ec91054d149017a99d1e80ffe28dc79596de",
         )
     }
     #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
@@ -57,7 +64,7 @@ fn ort_platform() -> (&'static str, &'static str, &'static str) {
         (
             "linux-aarch64",
             "tgz",
-            "b4d7c6e2c45f8edabe5d28e9bc59ec8d5a4a4af36660cda16e94b2ad85f2a52a",
+            "f020b3d31106cc7db03889b4a5c21e7c38ce4a09ad26119c11d1ad6d3fa0ec04",
         )
     }
 }
@@ -160,15 +167,17 @@ fn ensure_ort_runtime_inner() -> Result<()> {
     // catch via `?`. The pre-flight turns those into a graceful domain error.
     preflight_ort_dylib(&lib_path)?;
 
-    // Tell ort where to find the library (overrides System32 or PATH search)
-    ort::init_from(lib_path.to_string_lossy().as_ref()).commit()?;
+    // Tell ort where to find the library (overrides System32 or PATH search).
+    // rc.13: init_from returns Result<EnvironmentBuilder, _>; commit() returns
+    // bool (false if a global env was already committed — not an error).
+    let _ = ort::init_from(lib_path.to_string_lossy().as_ref())?.commit();
     Ok(())
 }
 
-/// Expected ONNX Runtime major.minor that ort 2.0.0-rc.9 requires (`ORT_VERSION`
+/// Expected ONNX Runtime major.minor that ort 2.0.0-rc.13 requires (`ORT_VERSION`
 /// minus patch). The loaded dylib's minor must match this.
 fn expected_ort_minor() -> &'static str {
-    // ORT_VERSION is "1.20.0" -> "1.20". Kept derived so a version bump needs
+    // ORT_VERSION is "1.28.2" -> "1.28". Kept derived so a version bump needs
     // only ORT_VERSION changed.
     ORT_VERSION
         .rsplit_once('.')
@@ -210,9 +219,9 @@ fn read_ort_dylib_version(lib_path: &std::path::Path) -> Result<String> {
         if base.is_null() {
             anyhow::bail!("OrtGetApiBase returned null");
         }
-        let get_version = (*base)
-            .GetVersionString
-            .ok_or_else(|| anyhow::anyhow!("OrtApiBase has no GetVersionString"))?;
+        // ort-sys rc.13: OrtApiBase.GetVersionString is a bare `fn` (the rc.10+
+        // ABI change dropped the Option<fn> wrapper). Call it directly.
+        let get_version = (*base).GetVersionString;
         let vptr = get_version();
         if vptr.is_null() {
             anyhow::bail!("GetVersionString returned null");
@@ -245,8 +254,8 @@ fn preflight_ort_dylib(lib_path: &std::path::Path) -> Result<()> {
     let version = read_ort_dylib_version(lib_path)
         .map_err(|e| anyhow::anyhow!("ONNX Runtime pre-flight failed: {e}. {remediation}"))?;
 
-    // ort rc.9 panics only when the loaded minor is LOWER than expected;
-    // require an exact minor match for a clear, early domain error.
+    // ort panics when the loaded ONNX RT API is lower than the build's api-NN;
+    // require an exact minor match for a clear, early domain error regardless.
     let expected = expected_ort_minor();
     let loaded_minor = version
         .rsplit_once('.')
@@ -254,7 +263,7 @@ fn preflight_ort_dylib(lib_path: &std::path::Path) -> Result<()> {
         .unwrap_or(&version);
     if loaded_minor != expected {
         anyhow::bail!(
-            "ONNX Runtime version mismatch: ort 2.0.0-rc.9 expects {expected}.x \
+            "ONNX Runtime version mismatch: ort 2.0.0-rc.13 expects {expected}.x \
              (ORT_VERSION {ORT_VERSION}), but the loaded dylib reports {version}. {remediation}"
         );
     }
@@ -539,7 +548,13 @@ fn model_cache_dir() -> Result<std::path::PathBuf> {
 
 /// Embedding model wrapper — loads once, reuses for batch operations.
 pub struct Embedder {
-    model: TextEmbedding,
+    // fastembed 7's `TextEmbedding::embed` takes `&mut self`. recall's embedder
+    // is shared by `&Embedder` across ingest/search/sync (and the test harness
+    // holds it in a `static OnceLock<Embedder>` across threads), so wrap the
+    // model in a Mutex to keep the public `&self` API AND stay `Sync`. Embedding
+    // is single-threaded per process, so contention is nil; the lock cost is
+    // negligible next to inference.
+    model: std::sync::Mutex<TextEmbedding>,
     which: Model,
 }
 
@@ -558,11 +573,14 @@ impl Embedder {
         // not a stale/nonexistent path from the user's environment.
         std::env::set_var("HF_HOME", &cache_dir);
         let model = TextEmbedding::try_new(
-            InitOptions::new(which.fastembed_model())
+            TextInitOptions::new(which.fastembed_model())
                 .with_cache_dir(cache_dir)
                 .with_show_download_progress(true),
         )?;
-        Ok(Embedder { model, which })
+        Ok(Embedder {
+            model: std::sync::Mutex::new(model),
+            which,
+        })
     }
 
     /// Which model is loaded.
@@ -577,7 +595,7 @@ impl Embedder {
 
     /// Embed a single text.
     pub fn embed_one(&self, text: &str) -> Result<Vec<f32>> {
-        let results = self.model.embed(vec![text], None)?;
+        let results = self.model.lock().unwrap().embed([text], None)?;
         Ok(results.into_iter().next().unwrap())
     }
 
@@ -595,7 +613,7 @@ impl Embedder {
         const SUB_BATCH: usize = 256;
         let mut out = Vec::with_capacity(texts.len());
         for window in texts.chunks(SUB_BATCH) {
-            let batch = self.model.embed(window.to_vec(), Some(SUB_BATCH))?;
+            let batch = self.model.lock().unwrap().embed(window, Some(SUB_BATCH))?;
             out.extend(batch);
         }
         Ok(out)
@@ -640,7 +658,7 @@ mod tests {
 
     #[test]
     fn expected_ort_minor_derives_from_version() {
-        assert_eq!(expected_ort_minor(), "1.20");
+        assert_eq!(expected_ort_minor(), "1.28");
     }
 
     #[test]

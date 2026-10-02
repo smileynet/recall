@@ -26,7 +26,7 @@ exit_code: 0
   "missing_projects": ["[FILTERED]"],
   "stale_wings": [],
   "ort_version": "[ORT]",
-  "ort_version_expected": "1.20.0"
+  "ort_version_expected": "1.28.2"
 }
 
 ----- stderr -----
