@@ -1,7 +1,7 @@
 ---
 id: "068"
 title: "embed: ONNX RT robustness — fix cargo-install resolve, graceful init, version pin + log (folds 049)"
-status: open
+status: in_progress
 blocked_by: ["064"]
 priority: high
 validation_criteria:
