@@ -88,7 +88,7 @@ recall --version                                   # version info
 ## Deployment
 
 - Binary: `~/.cargo/bin/recall.exe` (v0.1.0)
-- Scheduled task: `RecallIngest` runs `recall sync` every 6h (`IgnoreNew`, ExecutionTimeLimit `PT3H` — above the 2h app-guard ceiling so recall's own watchdog fires first)
+- Scheduled task: `RecallIngest` runs `recall sync` every 4h (`IgnoreNew` — a run still in flight when the next trigger fires is skipped, not stacked; ExecutionTimeLimit `PT72H` on the scheduler, with recall's own 2h app-guard watchdog (exit 2) the effective ceiling)
 - Corpus: ~44K chunks, 69 wings, 47/47 project coverage
 - Model: BGE-base-en-v1.5 (~416MB cached ONNX)
 - ONNX Runtime: load-dynamic (`~/.recall/lib/onnxruntime.dll`). A libloading pre-flight validates the cached dylib (`OrtGetApiBase` + `GetVersionString` minor == `ORT_VERSION`) before `ort` loads it, turning ort's internal panic on a bad DLL into a graceful domain error; `recall health` reports the loaded version. Version coupling (fastembed↔ort↔ort-sys↔ONNX RT) is pinned and documented in `.memory/adr/0003`.
