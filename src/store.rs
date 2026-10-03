@@ -561,7 +561,8 @@ pub fn plan_wing_migration(conn: &Connection) -> Result<WingMigrationPlan> {
             manifest_collisions,
         });
     }
-    plan.rewrites.sort_by(|a, b| b.chunk_count.cmp(&a.chunk_count));
+    plan.rewrites
+        .sort_by(|a, b| b.chunk_count.cmp(&a.chunk_count));
     Ok(plan)
 }
 

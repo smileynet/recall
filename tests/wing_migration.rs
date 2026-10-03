@@ -68,7 +68,10 @@ fn merges_variant_wings_into_canonical() {
     insert(&conn, "d", "web_app", "agent"); // already canonical, must not move
 
     let rewritten = store::apply_wing_migration(&conn).unwrap();
-    assert_eq!(rewritten, 2, "only the two non-canonical rows are rewritten");
+    assert_eq!(
+        rewritten, 2,
+        "only the two non-canonical rows are rewritten"
+    );
 
     // All three variants now live under one canonical wing.
     assert_eq!(wing_of(&conn, "a"), "sci_phoenix");
@@ -154,7 +157,10 @@ fn idempotent_second_run_is_noop() {
     insert(&conn, "b", "sci_phoenix", "agent");
 
     let first = store::apply_wing_migration(&conn).unwrap();
-    assert_eq!(first, 1, "only the non-canonical sci-phoenix chunk is rewritten");
+    assert_eq!(
+        first, 1,
+        "only the non-canonical sci-phoenix chunk is rewritten"
+    );
 
     let second = store::apply_wing_migration(&conn).unwrap();
     assert_eq!(second, 0, "second run rewrites nothing");

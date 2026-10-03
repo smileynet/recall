@@ -52,8 +52,10 @@ impl ProcessGuard {
             Ok(f) => f,
             Err(e) if is_benign_contention(&e) => return Ok(None),
             Err(e) => {
-                return Err(anyhow::Error::from(e)
-                    .context(format!("failed to create lock file: {}", lock_path.display())))
+                return Err(anyhow::Error::from(e).context(format!(
+                    "failed to create lock file: {}",
+                    lock_path.display()
+                )))
             }
         };
 
@@ -87,7 +89,10 @@ impl ProcessGuard {
 ///   treated as contention rather than a hard failure.
 fn is_benign_contention(e: &std::io::Error) -> bool {
     use std::io::ErrorKind;
-    if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::PermissionDenied) {
+    if matches!(
+        e.kind(),
+        ErrorKind::WouldBlock | ErrorKind::PermissionDenied
+    ) {
         return true;
     }
     matches!(e.raw_os_error(), Some(32) | Some(33))
@@ -268,7 +273,9 @@ mod tests {
             std::io::ErrorKind::NotFound
         )));
         // ERROR_DISK_FULL (112) is a real failure, not contention.
-        assert!(!is_benign_contention(&std::io::Error::from_raw_os_error(112)));
+        assert!(!is_benign_contention(&std::io::Error::from_raw_os_error(
+            112
+        )));
     }
 
     #[test]
