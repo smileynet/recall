@@ -1,7 +1,7 @@
 ---
 id: "072"
 title: "Guard import --force against silent whole-wing wipe"
-status: in_progress
+status: done
 blocked_by: []
 ---
 
@@ -44,7 +44,11 @@ true subdirectory-of-root guard can refuse the exact incident command.
 
 ## Acceptance criteria
 
-- [ ] `import --force` on a non-empty wing prompts with the chunk count before deleting
-- [ ] `--yes` bypasses the prompt; `sync`/`import-all` force paths pass `--yes` and never hang non-TTY
-- [ ] Test covers: force on non-empty wing without --yes refuses/prompts; with --yes proceeds
-- [ ] recall skill CLI reference (crew-research) updated if flag surface changes
+- [x] `import --force` on a non-empty wing prompts with the chunk count before deleting
+- [x] `--yes` bypasses the prompt; `sync`/`import-all` force paths pass `--yes` and never hang non-TTY
+- [x] Test covers: force on non-empty wing without --yes refuses/prompts; with --yes proceeds
+- [x] recall skill CLI reference (crew-research) updated if flag surface changes
+
+## Resolution (2026-10-03)
+
+Added a coarse force-wipe guard reusing the Forget decide/Decision gate. import/import-all/sync --force now show the blast radius and confirm before deleting a non-empty wing; --yes skips the prompt and non-TTY runs refuse rather than hang. Added count_chunks_by_source_prefix (matches the delete semantics) + 3 CLI tests. Docs updated in crew-research and the deployed skill.
