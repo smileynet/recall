@@ -194,3 +194,98 @@ fn forget_negative_duration_rejected() {
         .failure()
         .stderr(predicate::str::contains("invalid duration"));
 }
+
+// ─── import --force whole-wing wipe guard (ticket 072) ──────────────────────
+//
+// --force wipes the ENTIRE wing's imports (not just <path>'s subtree). Running
+// it on a subdirectory silently destroys the rest of the wing (incident
+// 2026-08-17: 11,409 drawers → 68). These tests verify the confirmation gate.
+// Same non-TTY mechanics as the forget tests above: the interactive [y/N] branch
+// is covered by the pure `decide()` unit tests in src/cli.rs.
+
+/// Seed one chunk whose source is `import:{wing}:<file>` so the force-wipe guard's
+/// `count_chunks_by_source_prefix("import:{wing}:")` sees it. Returns the db path.
+fn seeded_import_db(wing: &str) -> std::path::PathBuf {
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.keep().join("seeded_import.sqlite3");
+    {
+        let conn = recall::store::open_db_at(&db_path).unwrap();
+        let source = format!("import:{}:existing.md", wing);
+        recall::store::insert_chunk_atomic(
+            &conn,
+            "existing imported content",
+            wing,
+            "general",
+            "fact",
+            &source,
+            &[0.1f32; 768],
+        )
+        .unwrap();
+    }
+    db_path
+}
+
+#[test]
+fn import_force_non_tty_refuses_without_yes() {
+    // A non-empty wing + --force + no --yes in a non-TTY must refuse, NOT wipe.
+    let db = seeded_import_db("victim");
+    let dir = TempDir::new().unwrap();
+    let empty_src = dir.path(); // a valid (empty) directory to import from
+    recall_cmd()
+        .env("RECALL_DB", &db)
+        .args([
+            "import",
+            empty_src.to_str().unwrap(),
+            "--wing",
+            "victim",
+            "--force",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("refusing to force-delete"));
+    // The guard refused before any delete — the seeded chunk survives.
+    let conn = recall::store::open_db_at(&db).unwrap();
+    let remaining = recall::store::count_chunks_by_source_prefix(&conn, "import:victim:").unwrap();
+    assert_eq!(remaining, 1, "refused force must not delete the wing");
+}
+
+#[test]
+fn import_force_yes_proceeds() {
+    // --yes bypasses the prompt and lets --force proceed (wipe + reimport).
+    let db = seeded_import_db("victim");
+    let dir = TempDir::new().unwrap();
+    recall_cmd()
+        .env("RECALL_DB", &db)
+        .args([
+            "import",
+            dir.path().to_str().unwrap(),
+            "--wing",
+            "victim",
+            "--force",
+            "--yes",
+        ])
+        .assert()
+        .success();
+    // Force wiped the wing; the empty source dir re-imported nothing.
+    let conn = recall::store::open_db_at(&db).unwrap();
+    let remaining = recall::store::count_chunks_by_source_prefix(&conn, "import:victim:").unwrap();
+    assert_eq!(remaining, 0, "--yes force must wipe the wing");
+}
+
+#[test]
+fn import_force_empty_wing_no_confirmation() {
+    // --force on a wing with zero imports has nothing at risk → no prompt, and a
+    // non-TTY run without --yes still succeeds (gate returns proceed).
+    let mut cmd = recall_cmd();
+    with_empty_db(&mut cmd);
+    let dir = TempDir::new().unwrap();
+    cmd.args([
+        "import",
+        dir.path().to_str().unwrap(),
+        "--wing",
+        "fresh",
+        "--force",
+    ])
+    .assert()
+    .success();
+}

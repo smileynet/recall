@@ -51,12 +51,18 @@ enum Commands {
         /// Delete existing imports and reimport from scratch
         #[arg(long)]
         force: bool,
+        /// Skip the --force confirmation prompt (required for non-interactive use)
+        #[arg(long)]
+        yes: bool,
     },
     /// Import all .memory/ directories from project roots
     ImportAll {
         /// Force reimport all (delete + re-embed)
         #[arg(long)]
         force: bool,
+        /// Skip the --force confirmation prompt (required for non-interactive use)
+        #[arg(long)]
+        yes: bool,
     },
     /// Session start payload (recent facts + top results)
     Prime {
@@ -114,6 +120,9 @@ enum Commands {
         /// Force reimport all wings (bypass hash-gate)
         #[arg(long)]
         force: bool,
+        /// Skip the --force confirmation prompt (required for non-interactive use)
+        #[arg(long)]
+        yes: bool,
         /// Skip import step (only ingest sessions)
         #[arg(long)]
         skip_import: bool,
@@ -173,10 +182,13 @@ pub fn run() -> i32 {
             cmd_add(&content, &resolved_wing, &room, &r#type)
         }
         Commands::Ingest { path } => cmd_ingest(path.as_deref()),
-        Commands::Import { path, wing, force } => {
-            cmd_import(&path, &store::normalize_wing(&wing), force)
-        }
-        Commands::ImportAll { force } => cmd_import_all(force),
+        Commands::Import {
+            path,
+            wing,
+            force,
+            yes,
+        } => cmd_import(&path, &store::normalize_wing(&wing), force, yes),
+        Commands::ImportAll { force, yes } => cmd_import_all(force, yes),
         Commands::Prime { wing } => cmd_prime(wing.as_deref()),
         Commands::Status => cmd_status(),
         Commands::Health { json } => cmd_health(json),
@@ -196,9 +208,10 @@ pub fn run() -> i32 {
         },
         Commands::Sync {
             force,
+            yes,
             skip_import,
             skip_ingest,
-        } => cmd_sync(force, skip_import, skip_ingest),
+        } => cmd_sync(force, yes, skip_import, skip_ingest),
         Commands::Update => update::cmd_update(),
     };
 
@@ -366,7 +379,7 @@ fn cmd_ingest(path: Option<&str>) -> Result<i32> {
     ingest::run_ingest(path)
 }
 
-fn cmd_import(path: &str, wing: &str, force: bool) -> Result<i32> {
+fn cmd_import(path: &str, wing: &str, force: bool, yes: bool) -> Result<i32> {
     // Acquire exclusive process lock
     let _guard = match guard::ProcessGuard::try_acquire()? {
         Some(g) => g,
@@ -376,10 +389,16 @@ fn cmd_import(path: &str, wing: &str, force: bool) -> Result<i32> {
         }
     };
     guard::install_timeout();
+    // --force wipes the ENTIRE wing's imports (not just <path>'s subtree), so a
+    // --force on a subdirectory silently destroys the rest of the wing. Confirm
+    // the blast radius before proceeding (ticket 072).
+    if force && !confirm_force_wipe(wing, yes)? {
+        return Ok(0);
+    }
     ingest::import_directory(path, wing, force)
 }
 
-fn cmd_import_all(force: bool) -> Result<i32> {
+fn cmd_import_all(force: bool, yes: bool) -> Result<i32> {
     // Acquire exclusive process lock
     let _guard = match guard::ProcessGuard::try_acquire()? {
         Some(g) => g,
@@ -389,6 +408,12 @@ fn cmd_import_all(force: bool) -> Result<i32> {
         }
     };
     guard::install_timeout();
+
+    // --force deletes and re-imports every discovered wing. Confirm the total
+    // blast radius once before touching anything (ticket 072).
+    if force && !confirm_force_wipe_all(yes)? {
+        return Ok(0);
+    }
 
     let mut roots = Vec::new();
     if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
@@ -433,7 +458,7 @@ fn cmd_import_all(force: bool) -> Result<i32> {
     Ok(0)
 }
 
-fn cmd_sync(force: bool, skip_import: bool, skip_ingest: bool) -> Result<i32> {
+fn cmd_sync(force: bool, yes: bool, skip_import: bool, skip_ingest: bool) -> Result<i32> {
     // Acquire exclusive process lock — only one sync/ingest/import at a time
     let _guard = match guard::ProcessGuard::try_acquire()? {
         Some(g) => g,
@@ -446,6 +471,13 @@ fn cmd_sync(force: bool, skip_import: bool, skip_ingest: bool) -> Result<i32> {
 
     // Install hard timeout to prevent runaway processes
     guard::install_timeout();
+
+    // A forced import phase wipes every wing's imports before re-importing.
+    // Confirm the blast radius up front; a non-TTY run (e.g. the scheduled
+    // RecallIngest task) must pass --yes rather than block on a prompt (ticket 072).
+    if force && !skip_import && !confirm_force_wipe_all(yes)? {
+        return Ok(0);
+    }
 
     recall_log!("sync: starting");
 
@@ -819,6 +851,68 @@ fn discover_project_coverage(import_wings: &[String]) -> (usize, usize, Vec<Stri
         .collect();
 
     (discoverable.len(), covered.len(), missing)
+}
+
+/// Confirm an `import --force` wipe of a single wing's imports. Returns Ok(true)
+/// to proceed, Ok(false) to abort cleanly. Mirrors the `cmd_forget` gate: `--yes`
+/// skips the prompt, an interactive TTY prompts, and a non-TTY without `--yes`
+/// errors rather than deleting unattended (so the scheduled task can't hang).
+/// An empty wing needs no confirmation — nothing is at risk.
+fn confirm_force_wipe(wing: &str, yes: bool) -> Result<bool> {
+    let db = store::open_db()?;
+    let count = store::count_chunks_by_source_prefix(&db, &format!("import:{}:", wing))?;
+    if count == 0 {
+        return Ok(true);
+    }
+    gate_force(
+        &format!("{} imported chunk(s) in wing {:?}", count, wing),
+        yes,
+    )
+}
+
+/// Confirm an `import-all --force` / `sync --force` wipe spanning every wing's
+/// imports. Same gate semantics as `confirm_force_wipe`; shows the total import
+/// chunk count across all wings as the blast radius. No import chunks → no prompt.
+fn confirm_force_wipe_all(yes: bool) -> Result<bool> {
+    let db = store::open_db()?;
+    let count = store::count_chunks_by_source_prefix(&db, "import:")?;
+    if count == 0 {
+        return Ok(true);
+    }
+    gate_force(
+        &format!("all {} imported chunk(s) across all wings", count),
+        yes,
+    )
+}
+
+/// Shared force-wipe gate: shows `scope`, then resolves the confirmation using
+/// the same pure `decide` machinery as `cmd_forget`. Returns Ok(true)=proceed,
+/// Ok(false)=user aborted, Err=non-interactive refusal (no `--yes`).
+fn gate_force(scope: &str, yes: bool) -> Result<bool> {
+    let decision = match decide(yes, stdin_is_tty(), None) {
+        Decision::NeedsPrompt => {
+            print!(
+                "Force will delete {} before reimport. Continue? [y/N] ",
+                scope
+            );
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            decide(yes, true, Some(&read_line_lower()))
+        }
+        d => d,
+    };
+    match decision {
+        Decision::Proceed => Ok(true),
+        Decision::Abort => {
+            println!("Aborted.");
+            Ok(false)
+        }
+        Decision::RefuseNonInteractive => anyhow::bail!(
+            "refusing to force-delete {} without confirmation (pass --yes for non-interactive use)",
+            scope
+        ),
+        Decision::NeedsPrompt => unreachable!("NeedsPrompt resolved before dispatch"),
+    }
 }
 
 fn cmd_forget(wing: &str, older_than: Option<&str>, yes: bool) -> Result<i32> {

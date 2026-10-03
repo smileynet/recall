@@ -499,6 +499,24 @@ pub fn delete_chunks_by_source_prefix(conn: &Connection, prefix: &str) -> Result
     Ok(deleted)
 }
 
+/// Count chunks whose source begins with `prefix`. Mirrors the LIKE/ESCAPE
+/// semantics of `delete_chunks_by_source_prefix` exactly, so the returned count
+/// equals the number of rows a subsequent force-delete of the same prefix would
+/// remove — used to show the blast radius before an `import --force` wipe.
+pub fn count_chunks_by_source_prefix(conn: &Connection, prefix: &str) -> Result<usize> {
+    let escaped = prefix
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("{}%", escaped);
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM chunks WHERE source LIKE ?1 ESCAPE '\\'",
+        params![pattern],
+        |r| r.get(0),
+    )?;
+    Ok(count as usize)
+}
+
 // --- Wing normalization migration (ticket 054 Option B) ---
 
 /// A planned rewrite of one non-canonical wing into its canonical form.
@@ -562,7 +580,7 @@ pub fn plan_wing_migration(conn: &Connection) -> Result<WingMigrationPlan> {
         });
     }
     plan.rewrites
-        .sort_by(|a, b| b.chunk_count.cmp(&a.chunk_count));
+        .sort_by_key(|r| std::cmp::Reverse(r.chunk_count));
     Ok(plan)
 }
 
