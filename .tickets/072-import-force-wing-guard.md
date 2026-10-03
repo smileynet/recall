@@ -1,7 +1,7 @@
 ---
 id: "072"
 title: "Guard import --force against silent whole-wing wipe"
-status: open
+status: in_progress
 blocked_by: []
 ---
 
