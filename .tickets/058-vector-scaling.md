@@ -19,6 +19,11 @@ embeddings per query (~80MB resident for the current corpus at 768-dim × 4 byte
 × chunk count). This grows linearly and will blow past the ~1.5s search budget as
 the corpus scales.
 
+Review update (2026-10-09): the implementation still performs this exact
+all-embedding materialization and recomputes norms per query. Project notes now
+report a corpus around 44K chunks, so refresh the baseline benchmark before the
+100K trigger rather than relying on the older 27K estimate.
+
 ## Trigger to activate
 
 - Corpus exceeds ~100K chunks, OR

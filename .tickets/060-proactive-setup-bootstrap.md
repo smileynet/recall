@@ -52,7 +52,9 @@ passes. Raw findings in `.scratch/research/*.md` and `.scratch/review2/*.md`.
    double-launch given the ~24GB footprint).
 4. Flags: `--dry-run` (print units + paths, write nothing), `--uninstall` (symmetric),
    `--interval 6h`.
-5. Verify: print `recall health`, assert sessions ingested AND projects imported > 0.
+5. Verify: print `recall health` and report session/project coverage. A fresh
+   valid installation may have no session source or `.memory` project, so warn
+   on zero coverage rather than treating it as a setup failure.
 
 Unit shape: anchored `OnCalendar` + `Persistent=true`, `MemoryHigh`/`MemoryMax`,
 `RuntimeMaxSec`≈5h30m, verify `enable-linger`.
@@ -77,7 +79,9 @@ Unit shape: anchored `OnCalendar` + `Persistent=true`, `MemoryHigh`/`MemoryMax`,
 - [ ] `--dry-run` writes nothing and prints the rendered unit + target path
 - [ ] `--uninstall` cleanly removes what `setup` installed (symmetric)
 - [ ] Initial sync respects the fs2 lock (no launch if a run is active)
-- [ ] Ends by printing `recall health` and asserts sessions + projects imported > 0
+- [ ] Ends by printing `recall health`, reports coverage, and clearly warns
+      when no session source or projects are discoverable without failing a
+      valid setup
 - [ ] systemd unit includes memory caps + `RuntimeMaxSec` and verifies `enable-linger`
 - [ ] Does NOT emit cron on Linux
 - [ ] Tests cover `--dry-run` output and idempotent re-run
@@ -97,3 +101,10 @@ left on disk — reversible via `systemctl --user enable --now recall-ingest.tim
 The main deliverable (`recall setup` subcommand) remains **open** — this ticket tracks it.
 Blocked by #37 (config-driven import roots). Do not close until the setup subcommand + its
 acceptance criteria are met.
+
+## Review update — 2026-10-09
+
+The task query in the review environment did not find `RecallIngest`; this is
+not evidence about another user's deployment, but it reinforces that setup must
+be inspectable and idempotent rather than only documented. Include a status or
+dry-run view that states the exact scheduler target/action it would manage.

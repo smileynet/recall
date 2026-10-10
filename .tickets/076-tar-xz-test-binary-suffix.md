@@ -3,7 +3,7 @@ id: "076"
 title: "fix: tar.xz extract test fails on Windows - searches recall.exe but .tar.xz holds recall"
 status: open
 blocked_by: []
-priority: medium
+priority: high
 ---
 
 # fix: tar.xz extract test fails on Windows (binary-name/suffix mismatch)
@@ -20,6 +20,10 @@ called `Result::unwrap()` on an `Err` value: binary 'recall.exe' not found in ar
 
 115 pass, this 1 fails — **Windows-only**. The feature itself (#063 pure-Rust xz
 extraction) works; this is a test/platform mismatch.
+
+Review validation on 2026-10-09 reproduced the failure at current `HEAD`:
+`cargo test --all-targets` stopped with 115 unit tests passing and this test
+failing. Raise priority to high because it prevents a green Windows suite.
 
 ## Root cause
 

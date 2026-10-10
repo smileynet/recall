@@ -4,6 +4,7 @@ title: "Explore config options for user-tunable behaviors"
 status: open
 blocked_by: []
 estimate: 2h
+priority: high
 ---
 
 # User-Tunable Config Options
@@ -13,6 +14,16 @@ estimate: 2h
 recall currently has minimal configuration (RECALL_DB, RECALL_MODEL, FASTEMBED_CACHE_DIR
 as env vars, and ~/.recall/config.toml with only telemetry settings). As the tool grows,
 users need knobs to tune behavior without editing source.
+
+## Review update — 2026-10-09
+
+The architecture review promotes import-root configuration from a convenience
+to a prerequisite for safe, portable operation. Root discovery is currently
+duplicated in `import-all`, `sync`, and health coverage, and hard-codes both
+`~/code` and `D:/code`. This ticket must define one shared project-discovery
+API and make `import.roots`/`import.exclude` the first v0.2 configuration
+surface. It remains the dependency for #060; #080 fixes root identity and data
+loss independently.
 
 ## What to explore
 
@@ -61,3 +72,6 @@ Design a unified config system that lets users control:
 - [ ] Decision on config format and parsing approach
 - [ ] Decision on CLI interface for config management
 - [ ] Priority ranking of options (which ones users actually need first)
+- [ ] One shared discovery implementation replaces the three hard-coded root
+      scans before additional root-related behavior is added
+- [ ] `import.roots` and `import.exclude` are included in the first delivery

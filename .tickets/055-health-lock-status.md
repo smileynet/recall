@@ -3,7 +3,7 @@ id: "055"
 title: "recall health: report process-lock status; guard forget"
 status: open
 blocked_by: []
-priority: low
+priority: medium
 validation_criteria:
   - "cargo test passes"
   - "health shows lock held/free"
@@ -15,6 +15,14 @@ validation_criteria:
 
 From the 2026-08-23 review (deferred in 048). Two low-priority operational
 improvements around the process lock introduced in the guard work.
+
+## Review update — 2026-10-09
+
+The current review confirmed that `forget` is still the exception among
+mutating maintenance commands: ingest/import/sync/migrate acquire
+`ProcessGuard`, while `forget` does not. WAL prevents physical corruption, but
+an overlapping ingest can restore content a user just deleted. Raise this from
+low to medium and complete it before exposing more scheduler setup automation.
 
 ## What to build
 
