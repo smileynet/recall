@@ -25,6 +25,11 @@ API and make `import.roots`/`import.exclude` the first v0.2 configuration
 surface. It remains the dependency for #060; #080 fixes root identity and data
 loss independently.
 
+The 2026-10-10 architecture review also found that the telemetry save path can
+erase unrelated settings because configuration and `~/.recall` path resolution
+have no owner. This ticket must decide the configuration document contract,
+unknown-key preservation, and the local-state boundary implemented by #087.
+
 ## What to explore
 
 Design a unified config system that lets users control:
@@ -65,6 +70,10 @@ Design a unified config system that lets users control:
 3. **Precedence:** env vars > config.toml > defaults?
 4. **Validation:** Error on unknown keys? Warn?
 5. **Migration:** What happens when config schema changes between versions?
+6. **Ownership:** What one local-state/config boundary owns path resolution and
+   targeted, lossless configuration updates?
+7. **Forward compatibility:** Which unknown sections/keys must survive a
+   read/modify/write by an older binary?
 
 ## Acceptance criteria
 
@@ -75,3 +84,5 @@ Design a unified config system that lets users control:
 - [ ] One shared discovery implementation replaces the three hard-coded root
       scans before additional root-related behavior is added
 - [ ] `import.roots` and `import.exclude` are included in the first delivery
+- [ ] The design specifies full-document, lossless config update semantics and
+      the local-state ownership boundary consumed by #087

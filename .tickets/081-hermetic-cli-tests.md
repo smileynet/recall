@@ -32,6 +32,9 @@ Coordinate the expected health JSON representation with #082.
    directories; ensure parallel tests cannot race on a shared DLL/model file.
 4. Keep a small, explicit integration tier for real-model verification rather
    than making normal `cargo test` depend on network/runtime installation.
+5. Keep side-effect-free command parsing and empty-corpus output paths outside
+   FastEmbed construction. Use an explicit supplied embedder, controlled fake,
+   or preseeded dependency only where retrieval behavior actually needs one.
 
 ## Acceptance criteria
 
@@ -40,6 +43,12 @@ Coordinate the expected health JSON representation with #082.
 - [ ] CLI contract and snapshot tests pass with no cached model or ORT runtime.
 - [ ] Tests needing real embeddings use an explicit isolated fixture/tier.
 - [ ] Parallel test runs cannot contend for a runtime DLL.
+- [ ] Empty-corpus `prime` and other output-only paths do not initialize
+      FastEmbed or ONNX Runtime.
+- [ ] Test helpers use explicit temporary DB/local-state paths instead of
+      `RECALL_DB`, `HF_HOME`, or other process-global environment mutation.
+- [ ] CLI usage/parse failures create no config, logs, models, runtime files,
+      or telemetry data and make no network call.
 - [ ] #082's selected JSON contract is covered by a stable snapshot.
 
 ## Validation criteria

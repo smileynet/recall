@@ -2,7 +2,7 @@
 id: "077"
 title: "Fix migrate --force data duplication"
 status: open
-blocked_by: []
+blocked_by: ["083"]
 env: either
 priority: high
 ---
@@ -19,6 +19,7 @@ therefore normally a no-op and the retry inserts duplicate chunks and FTS rows.
 
 Do **not** use `migrate --force` against a populated destination until this is
 fixed. This is a data-integrity issue, not merely a misleading progress message.
+Implement any durable provenance schema through #083's migration framework.
 
 ## What to build
 

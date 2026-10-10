@@ -1,15 +1,15 @@
 ---
 id: "055"
-title: "recall health: report process-lock status; guard forget"
+title: "Centralize exclusive corpus-operation policy and report lock status"
 status: open
 blocked_by: []
-priority: medium
+priority: high
 validation_criteria:
   - "cargo test passes"
   - "health shows lock held/free"
 ---
 
-# recall health: report process-lock status; guard forget
+# Centralize exclusive corpus-operation policy and report lock status
 
 ## Context
 
@@ -21,8 +21,13 @@ improvements around the process lock introduced in the guard work.
 The current review confirmed that `forget` is still the exception among
 mutating maintenance commands: ingest/import/sync/migrate acquire
 `ProcessGuard`, while `forget` does not. WAL prevents physical corruption, but
-an overlapping ingest can restore content a user just deleted. Raise this from
-low to medium and complete it before exposing more scheduler setup automation.
+an overlapping ingest can restore content a user just deleted.
+
+The 2026-10-10 architecture review found a broader policy problem: lock
+acquisition, graceful contention behavior, and timeouts are independently
+implemented in multiple command handlers. `migrate-wings` and `add` also mutate
+the corpus but have no explicit concurrency classification. Raise this to high:
+the fix must centralize the policy rather than add another bespoke guard branch.
 
 ## What to build
 
@@ -34,18 +39,31 @@ hard without visibility into the lock.
 - [ ] Surface in `recall health` (and `--json`) as e.g. `process_lock: free|held`
 - [ ] If held and the lock file has a PID, show it
 
-### Guard `forget` (`src/cli.rs` cmd_forget)
-`cmd_forget` deletes without the process lock. A concurrent ingest could
-re-insert chunks that `forget` just deleted (logical race; WAL prevents hard
-corruption). Low risk but easy to close.
-- [ ] Acquire `ProcessGuard` in `cmd_forget` (skip gracefully if held)
+### One corpus-operation policy
+
+Put exclusive lock acquisition, lock-held result, timeout selection, and health
+diagnostics behind one concrete operational-policy implementation. Long or
+corpus-wide commands must use it instead of hand-copying lock branches. Every
+mutating command, including `forget`, `migrate-wings`, and `add`, must be
+explicitly classified as exclusive or as a safe short atomic write with a
+tested rationale.
+
+Do not add a generic lock-backend trait: Recall has one process lock. The goal
+is one policy, not a shallow abstraction.
 
 Note: coordinate with 052 (forget confirmation) — both touch `cmd_forget`.
 
 ## Acceptance criteria
 
 - [ ] `recall health` shows process-lock status (free/held + PID if held)
-- [ ] `cmd_forget` acquires the process lock
+- [ ] All multi-step or corpus-wide mutations use one exclusive-operation
+      policy; exception classifications are documented and tested
+- [ ] A held lock produces one consistent user-facing result and is represented
+      in health text and JSON
+- [ ] Timeout selection belongs to the same policy and preserves scaled-session
+      behavior
+- [ ] #060 initial setup sync uses this policy; #071 can record a lock-held run
+      as skipped rather than successful
 - [ ] `cargo test` passes; cli_contract/snapshot updated if health output changed
 
 ## Validation criteria

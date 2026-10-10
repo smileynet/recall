@@ -2,7 +2,7 @@
 id: "080"
 title: "Make imports safe across roots and subdirectories"
 status: open
-blocked_by: []
+blocked_by: ["083"]
 env: either
 priority: high
 ---
@@ -28,7 +28,8 @@ per wing and no subdirectory imports into an already populated wing.
 2. Scope orphan detection and `--force` deletion to the selected root unless a
    deliberately explicit whole-wing operation is requested.
 3. Add a backward-compatible migration for existing manifests/chunk source
-   keys. Define a safe ambiguity policy rather than silently deleting data.
+   keys through #083's migration framework. Define a safe ambiguity policy
+   rather than silently deleting data.
 4. Coordinate root discovery/configuration with #37, but do not make this data
    integrity fix depend on the broader configuration design.
 
