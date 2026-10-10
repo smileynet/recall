@@ -21,6 +21,8 @@ reliable engineering baseline before adding richer memory features.
 3. **#081 — hermetic CLI tests.** Remove home-directory, network, model-cache,
    and DLL-install dependencies from the normal test tier. It consumes #082's
    chosen JSON contract.
+4. **#084 — bound update resources.** Apply the same bounded-resource discipline
+   already used for tar extraction to downloaded bytes and zip extraction.
 
 Exit gate: `cargo test`, `cargo clippy --all-targets -- -D warnings`, and
 `cargo fmt --check` pass on a machine with an empty user runtime cache and no
@@ -28,16 +30,18 @@ network access.
 
 ## Phase 1 — protect corpus integrity
 
-1. **#077 — migration force semantics.** Do not use `recall migrate --force`
+1. **#083 — schema migration framework.** Establish one tested upgrade path
+   before adding provenance/root-identity columns and future preference data.
+2. **#077 — migration force semantics.** Do not use `recall migrate --force`
    against a populated destination until it deletes exactly its own provenance.
-2. **#078 — model compatibility barrier.** Reject model-mismatched writes and
+3. **#078 — model compatibility barrier.** Reject model-mismatched writes and
    unequal-length vector comparisons before they poison a corpus.
-3. **#079 — scan cache correctness.** Implement the advertised stat-then-hash
+4. **#079 — scan cache correctness.** Implement the advertised stat-then-hash
    gate with precise metadata and no missed same-size content revisions.
-4. **#080 — import-root identity.** Scope source keys, orphan cleanup, and
+5. **#080 — import-root identity.** Scope source keys, orphan cleanup, and
    force behavior to an import root, not only a wing. Until then, use one
    canonical `.memory` root per wing and avoid subdirectory imports.
-5. **#055 — lock `forget`.** Make every corpus-mutating command participate in
+6. **#055 — lock `forget`.** Make every corpus-mutating command participate in
    the same process-lock protocol and expose lock state through health.
 
 Exit gate: new regression/integration tests prove no duplication, mixed-model
@@ -53,7 +57,11 @@ vectors, false scan skips, or cross-root import deletions.
    failing a valid empty installation.
 3. **#070 / #071.** Replace the unmaintained lock dependency and make lock-skip
    telemetry distinguishable from successful work.
-4. **#039 / #038.** Establish version/changelog discipline and package the
+4. **#086 — search-query robustness.** Make normal assistant-language queries
+   safe for FTS5 and retain vector retrieval when lexical parsing cannot help.
+5. **#085 — documentation/runtime contract.** Reconcile local-first, network,
+   testing, install, and scheduler claims against the implemented behavior.
+6. **#039 / #038.** Establish version/changelog discipline and package the
    assistant skill only after the operational contract is stable.
 
 ## Phase 3 — measured improvements, not speculative complexity
