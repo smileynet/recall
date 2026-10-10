@@ -21,3 +21,6 @@ Thumbs.db
 
 # Local runtime data (DB + model cache when RECALL_DB points into the repo)
 /.data/
+
+# Uninstall backups of ~/.recall
+/.backup/

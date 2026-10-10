@@ -7,6 +7,24 @@ blocked_by: []
 
 # Adopt Agent Plugins Standard
 
+## Status note (2026-10-09 review — VERIFY BEFORE STARTING)
+
+Staleness risk. This ticket is entirely driven by an **external** crew-research protocol
+(crew-research ticket 98) and references repos outside this workspace
+(`~/code/refs/...`, `~/code/crew-research`, `~/code/archwright`). None of its deliverables
+exist in-repo yet (no `skills/` tree, no `plugin.json`, no `SKILL_MANIFEST.yaml`, no
+`tools/deploy-skills.sh`) — status `open` is accurate.
+
+Before investing, confirm two things:
+1. **crew-research ticket 98 is still live** and the skill-ownership-moves-to-tool-repo
+   protocol was not abandoned or redesigned. This repo cannot verify that.
+2. **Version drift** — the drafted `plugin.json`/`SKILL_MANIFEST.yaml` below hardcode
+   `0.2.0`, but the shipped binary reports `0.1.0` (see ticket 39). Whatever version this
+   adopts must come from the single-source-of-truth decided in ticket 39, not a literal.
+
+If (1) cannot be confirmed, park this ticket (set `status: backlog`) rather than build
+against a possibly-dead external contract.
+
 ## Context
 
 crew-research is formalizing a skill import protocol (crew-research ticket 98) where tool
