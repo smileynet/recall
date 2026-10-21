@@ -1,7 +1,7 @@
 ---
 id: "055"
 title: "Centralize exclusive corpus-operation policy and report lock status"
-status: in_progress
+status: done
 blocked_by: []
 priority: high
 validation_criteria:
@@ -55,18 +55,26 @@ Note: coordinate with 052 (forget confirmation) — both touch `cmd_forget`.
 
 ## Acceptance criteria
 
-- [ ] `recall health` shows process-lock status (free/held + PID if held)
-- [ ] All multi-step or corpus-wide mutations use one exclusive-operation
+- [x] `recall health` shows process-lock status (free/held + PID if held)
+- [x] All multi-step or corpus-wide mutations use one exclusive-operation
       policy; exception classifications are documented and tested
-- [ ] A held lock produces one consistent user-facing result and is represented
+- [x] A held lock produces one consistent user-facing result and is represented
       in health text and JSON
-- [ ] Timeout selection belongs to the same policy and preserves scaled-session
+- [x] Timeout selection belongs to the same policy and preserves scaled-session
       behavior
-- [ ] #060 initial setup sync uses this policy; #071 can record a lock-held run
+- [x] #060 initial setup sync uses this policy; #071 can record a lock-held run
       as skipped rather than successful
-- [ ] `cargo test` passes; cli_contract/snapshot updated if health output changed
+- [x] `cargo test` passes; cli_contract/snapshot updated if health output changed
 
 ## Validation criteria
 
 - `recall health --json` includes a `process_lock` field
 - Manual: hold the lock (long ingest) → `recall health` shows "held"
+
+## Resolution (2026-10-21)
+
+Centralized the exclusive corpus-operation policy and added lock-status reporting. guard::ExclusiveOp (via guard::exclusive(label)) now owns lock acquisition, the lock-held skip result (OpOutcome::Ran vs SkippedLockHeld), and timeout selection (TimeoutPolicy Fixed|Scaled) — replacing the ~6-line try_acquire+timeout branch hand-copied into ingest/import/import-all/sync/migrate. Classified all mutators: forget and migrate-wings are now exclusive (an overlapping ingest could race/undo them); add stays unlocked as a safe short atomic write with documented rationale. Added guard::probe_lock/LockStatus (non-blocking try-acquire-then-release) surfaced in recall health text (Process lock: free|held (pid N)) and --json (process_lock: {state,pid}). Unit tests for policy/probe/outcome/timeout + cli_contract process_lock assertion + health JSON snapshot updated.
+
+### Verification
+1. ✓ cargo test passes — "cargo test passes: all test binaries 0 failed (guard unit tests exclusive_op_runs_body_when_lock_free, lock_status_describe_forms/serializes_tagged, op_outcome_exit_code, resolve_timeout_* all pass); fmt --check clean, clippy -D warnings = 0"
+2. ✓ health shows lock held/free — "health shows lock held/free: recall health prints "Process lock: free"; recall health --json emits process_lock {state: free}; held path shows pid via probe_lock; cli_contract asserts the field"
