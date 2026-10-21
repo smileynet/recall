@@ -265,7 +265,19 @@ fn wing_from_cwd() -> String {
 
 /// Merge fragmented wings into canonical form. Dry-run by default; `--yes`
 /// applies inside one transaction after a VACUUM INTO backup.
+///
+/// Exclusive: the apply path rewrites `chunks.wing`, the `import:{wing}:` source
+/// prefix, and the `import_sources` manifest together, corpus-wide — an
+/// overlapping ingest/import would race the rewrite. The dry-run path only reads,
+/// but the policy wraps the whole command so the lock-held result is uniform; the
+/// plan read is cheap and the fixed timeout is ample.
 fn cmd_migrate_wings(apply: bool, no_backup: bool) -> Result<i32> {
+    guard::exclusive("migrate-wings")
+        .run(|| cmd_migrate_wings_body(apply, no_backup))
+        .map(guard::OpOutcome::into_exit_code)
+}
+
+fn cmd_migrate_wings_body(apply: bool, no_backup: bool) -> Result<i32> {
     let db = store::open_db()?;
     let plan = store::plan_wing_migration(&db)?;
 
@@ -351,6 +363,12 @@ fn cmd_search(query: &str, wing: Option<&str>, max_results: usize) -> Result<i32
 }
 
 fn cmd_add(content: &str, wing: &str, room: &str, dtype: &str) -> Result<i32> {
+    // Classification: safe short atomic write — NOT exclusive. `add` issues only
+    // brief, WAL-serialized statements (one chunk insert + two meta upserts) with
+    // no read-modify-write over the corpus, so an overlapping run cannot corrupt
+    // or partially undo it. WAL serializes the writes; the exclusive policy would
+    // only add contention against the background ingest for no safety gain.
+    // (ticket 055 — every mutator classified; this is the sole unlocked one.)
     let db = store::open_db()?;
     embed::check_model_mismatch(&db);
     let embedder = embed::Embedder::new()?;
@@ -364,136 +382,125 @@ fn cmd_add(content: &str, wing: &str, room: &str, dtype: &str) -> Result<i32> {
 }
 
 fn cmd_ingest(path: Option<&str>) -> Result<i32> {
-    // Acquire exclusive process lock
-    let _guard = match guard::ProcessGuard::try_acquire()? {
-        Some(g) => g,
-        None => {
-            recall_log!("ingest: another recall instance is running, exiting");
-            eprintln!("recall: another instance is already running, skipping");
-            return Ok(0);
-        }
-    };
-    // Scale the timeout to the session-file count (worst case: all files change).
+    // Exclusive: a full corpus-wide session re-embed. Scale the timeout to the
+    // session-file count (worst case: all files change).
     let file_count = ingest::count_session_files(path);
-    guard::install_timeout_scaled(file_count);
-    ingest::run_ingest(path)
+    guard::exclusive("ingest")
+        .timeout(guard::TimeoutPolicy::Scaled(file_count))
+        .run(|| ingest::run_ingest(path))
+        .map(guard::OpOutcome::into_exit_code)
 }
 
 fn cmd_import(path: &str, wing: &str, force: bool, yes: bool) -> Result<i32> {
-    // Acquire exclusive process lock
-    let _guard = match guard::ProcessGuard::try_acquire()? {
-        Some(g) => g,
-        None => {
-            eprintln!("recall: another instance is already running, skipping");
-            return Ok(0);
-        }
-    };
-    guard::install_timeout();
-    // --force wipes the ENTIRE wing's imports (not just <path>'s subtree), so a
-    // --force on a subdirectory silently destroys the rest of the wing. Confirm
-    // the blast radius before proceeding (ticket 072).
-    if force && !confirm_force_wipe(wing, yes)? {
-        return Ok(0);
-    }
-    ingest::import_directory(path, wing, force)
+    // Exclusive: --force wipes the wing's imports then re-embeds — a multi-step
+    // mutation an overlapping run could interleave with.
+    guard::exclusive("import")
+        .run(|| {
+            // --force wipes the ENTIRE wing's imports (not just <path>'s subtree), so a
+            // --force on a subdirectory silently destroys the rest of the wing. Confirm
+            // the blast radius before proceeding (ticket 072).
+            if force && !confirm_force_wipe(wing, yes)? {
+                return Ok(0);
+            }
+            ingest::import_directory(path, wing, force)
+        })
+        .map(guard::OpOutcome::into_exit_code)
 }
 
 fn cmd_import_all(force: bool, yes: bool) -> Result<i32> {
-    // Acquire exclusive process lock
-    let _guard = match guard::ProcessGuard::try_acquire()? {
-        Some(g) => g,
-        None => {
-            eprintln!("recall: another instance is already running, skipping");
-            return Ok(0);
-        }
-    };
-    guard::install_timeout();
+    // Exclusive: deletes and re-imports every discovered wing.
+    guard::exclusive("import-all")
+        .run(|| {
+            // --force deletes and re-imports every discovered wing. Confirm the total
+            // blast radius once before touching anything (ticket 072).
+            if force && !confirm_force_wipe_all(yes)? {
+                return Ok(0);
+            }
 
-    // --force deletes and re-imports every discovered wing. Confirm the total
-    // blast radius once before touching anything (ticket 072).
-    if force && !confirm_force_wipe_all(yes)? {
-        return Ok(0);
-    }
+            let import_cfg = config::import();
+            let roots = config::resolve_roots(&import_cfg);
+            let projects = config::discover_memory_projects(
+                &roots,
+                &import_cfg.exclude,
+                store::normalize_wing,
+            );
 
-    let import_cfg = config::import();
-    let roots = config::resolve_roots(&import_cfg);
-    let projects =
-        config::discover_memory_projects(&roots, &import_cfg.exclude, store::normalize_wing);
+            let mut imported = 0;
+            for project in &projects {
+                recall_log!("  {} → wing: {}", project.wing, project.wing);
+                ingest::import_directory(
+                    &project.memory_path.to_string_lossy(),
+                    &project.wing,
+                    force,
+                )?;
+                imported += 1;
+            }
 
-    let mut imported = 0;
-    for project in &projects {
-        recall_log!("  {} → wing: {}", project.wing, project.wing);
-        ingest::import_directory(&project.memory_path.to_string_lossy(), &project.wing, force)?;
-        imported += 1;
-    }
-
-    if imported == 0 {
-        println!("No projects with .memory/ found in {:?}", roots);
-    } else {
-        println!("\nImported {} projects", imported);
-    }
-    Ok(0)
+            if imported == 0 {
+                println!("No projects with .memory/ found in {:?}", roots);
+            } else {
+                println!("\nImported {} projects", imported);
+            }
+            Ok(0)
+        })
+        .map(guard::OpOutcome::into_exit_code)
 }
 
 fn cmd_sync(force: bool, yes: bool, skip_import: bool, skip_ingest: bool) -> Result<i32> {
-    // Acquire exclusive process lock — only one sync/ingest/import at a time
-    let _guard = match guard::ProcessGuard::try_acquire()? {
-        Some(g) => g,
-        None => {
-            recall_log!("sync: another recall instance is running, exiting");
-            eprintln!("recall: another instance is already running, skipping");
-            return Ok(0);
-        }
-    };
+    // Exclusive: ingest + import-all in one process — only one sync/ingest/import
+    // at a time.
+    guard::exclusive("sync")
+        .run(|| {
+            // A forced import phase wipes every wing's imports before re-importing.
+            // Confirm the blast radius up front; a non-TTY run (e.g. the scheduled
+            // RecallIngest task) must pass --yes rather than block on a prompt (ticket 072).
+            if force && !skip_import && !confirm_force_wipe_all(yes)? {
+                return Ok(0);
+            }
 
-    // Install hard timeout to prevent runaway processes
-    guard::install_timeout();
+            recall_log!("sync: starting");
 
-    // A forced import phase wipes every wing's imports before re-importing.
-    // Confirm the blast radius up front; a non-TTY run (e.g. the scheduled
-    // RecallIngest task) must pass --yes rather than block on a prompt (ticket 072).
-    if force && !skip_import && !confirm_force_wipe_all(yes)? {
-        return Ok(0);
-    }
+            // Load embedder once for both operations
+            let embedder = embed::Embedder::new()?;
 
-    recall_log!("sync: starting");
+            // Phase 1: Ingest sessions
+            if !skip_ingest {
+                recall_log!("sync: ingesting sessions");
+                ingest::run_ingest_with_embedder(None, &embedder)?;
+            }
 
-    // Load embedder once for both operations
-    let embedder = embed::Embedder::new()?;
+            // Phase 2: Import all .memory/ directories
+            if !skip_import {
+                recall_log!("sync: importing .memory/ directories");
 
-    // Phase 1: Ingest sessions
-    if !skip_ingest {
-        recall_log!("sync: ingesting sessions");
-        ingest::run_ingest_with_embedder(None, &embedder)?;
-    }
+                let import_cfg = config::import();
+                let roots = config::resolve_roots(&import_cfg);
+                let projects = config::discover_memory_projects(
+                    &roots,
+                    &import_cfg.exclude,
+                    store::normalize_wing,
+                );
 
-    // Phase 2: Import all .memory/ directories
-    if !skip_import {
-        recall_log!("sync: importing .memory/ directories");
+                let mut imported = 0;
+                for project in &projects {
+                    recall_log!("  {} → wing: {}", project.wing, project.wing);
+                    ingest::import_directory_with_embedder(
+                        &project.memory_path.to_string_lossy(),
+                        &project.wing,
+                        force,
+                        &embedder,
+                    )?;
+                    imported += 1;
+                }
 
-        let import_cfg = config::import();
-        let roots = config::resolve_roots(&import_cfg);
-        let projects =
-            config::discover_memory_projects(&roots, &import_cfg.exclude, store::normalize_wing);
+                recall_log!("sync: imported {} projects", imported);
+            }
 
-        let mut imported = 0;
-        for project in &projects {
-            recall_log!("  {} → wing: {}", project.wing, project.wing);
-            ingest::import_directory_with_embedder(
-                &project.memory_path.to_string_lossy(),
-                &project.wing,
-                force,
-                &embedder,
-            )?;
-            imported += 1;
-        }
-
-        recall_log!("sync: imported {} projects", imported);
-    }
-
-    recall_log!("sync: complete");
-    println!("Sync complete.");
-    Ok(0)
+            recall_log!("sync: complete");
+            println!("Sync complete.");
+            Ok(0)
+        })
+        .map(guard::OpOutcome::into_exit_code)
 }
 
 fn cmd_prime(wing_arg: Option<&str>) -> Result<i32> {
@@ -632,6 +639,7 @@ fn cmd_health(json: bool) -> Result<i32> {
                 health.ort_version_expected
             ),
         }
+        println!("  Process lock:  {}", health.process_lock.describe());
         if let Some(log_path) = recall::logging::current_log_path() {
             if let Ok(meta) = std::fs::metadata(&log_path) {
                 println!(
@@ -663,6 +671,7 @@ struct HealthReport {
     stale_wings: Vec<String>,
     ort_version: Option<String>,
     ort_version_expected: String,
+    process_lock: guard::LockStatus,
 }
 
 fn build_health_report(db: &rusqlite::Connection) -> Result<HealthReport> {
@@ -733,6 +742,7 @@ fn build_health_report(db: &rusqlite::Connection) -> Result<HealthReport> {
         stale_wings: Vec::new(),
         ort_version: recall::embed::ort_runtime_version(),
         ort_version_expected: recall::embed::expected_ort_version().to_string(),
+        process_lock: guard::probe_lock(),
     })
 }
 
@@ -845,6 +855,16 @@ fn gate_force(scope: &str, yes: bool) -> Result<bool> {
 }
 
 fn cmd_forget(wing: &str, older_than: Option<&str>, yes: bool) -> Result<i32> {
+    // Exclusive: a delete that an overlapping ingest could partially undo by
+    // restoring content between the count and the delete. Hold the lock across
+    // the whole confirm-then-delete so the user's decision reflects a stable
+    // corpus (coordinated with ticket 052's confirmation gate).
+    guard::exclusive("forget")
+        .run(|| cmd_forget_body(wing, older_than, yes))
+        .map(guard::OpOutcome::into_exit_code)
+}
+
+fn cmd_forget_body(wing: &str, older_than: Option<&str>, yes: bool) -> Result<i32> {
     let db = store::open_db()?;
 
     // Resolve the cutoff (if any) up front so we can both count and delete.
@@ -1000,18 +1020,14 @@ fn parse_duration(s: &str) -> Option<i64> {
 }
 
 fn cmd_migrate(from: &str, batch_embed: bool, force: bool) -> Result<i32> {
-    // Migration is a bulk write (optionally re-embedding the whole corpus).
-    // Acquire the process lock so it can't race a concurrent ingest/sync.
-    let _guard = match guard::ProcessGuard::try_acquire()? {
-        Some(g) => g,
-        None => {
-            eprintln!("recall: another instance is already running, skipping");
-            return Ok(0);
-        }
-    };
-    guard::install_timeout();
-    migrate::run_migrate(from, batch_embed, force)?;
-    Ok(0)
+    // Exclusive: a bulk write (optionally re-embedding the whole corpus) that
+    // must not race a concurrent ingest/sync.
+    guard::exclusive("migrate")
+        .run(|| {
+            migrate::run_migrate(from, batch_embed, force)?;
+            Ok(0)
+        })
+        .map(guard::OpOutcome::into_exit_code)
 }
 
 #[cfg(test)]

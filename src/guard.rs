@@ -34,6 +34,187 @@ pub struct ProcessGuard {
     _file: std::fs::File,
 }
 
+/// Which execution timeout a corpus operation installs once it holds the lock.
+///
+/// The timeout policy lives here — not in the command handlers — so timeout
+/// selection is part of the single exclusive-operation policy (ticket 055 AC4)
+/// rather than something each handler picks by calling the right free function.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeoutPolicy {
+    /// Fixed 90-minute default. For bounded bulk writes (import, migrate) whose
+    /// duration isn't proportional to a known file count.
+    Fixed,
+    /// Workload-scaled: `floor + per_file × file_count`, clamped. For ingest/sync
+    /// where runtime grows with the number of session files to process.
+    Scaled(usize),
+}
+
+impl TimeoutPolicy {
+    /// Install the watchdog this policy describes. `RECALL_TIMEOUT` still
+    /// overrides both variants (and `RECALL_TIMEOUT=0` disables).
+    fn install(self) {
+        match self {
+            TimeoutPolicy::Fixed => install_timeout(),
+            TimeoutPolicy::Scaled(file_count) => install_timeout_scaled(file_count),
+        }
+    }
+}
+
+/// Outcome of attempting an exclusive corpus operation.
+///
+/// Distinguishes "ran the body" from "skipped because another instance held the
+/// lock". The skip carries the exit code (0 — a skip is not a failure) so a
+/// future telemetry outcome field (ticket 071) can record it as `skipped`
+/// rather than a success-looking event, without this policy depending on the
+/// telemetry layer.
+#[derive(Debug)]
+pub enum OpOutcome {
+    /// The body ran; this is its result.
+    Ran(i32),
+    /// Another instance held the lock; the body did not run. Carries the exit
+    /// code to return (0 — graceful skip, not an error).
+    SkippedLockHeld(i32),
+}
+
+impl OpOutcome {
+    /// Collapse to the process exit code, discarding the ran/skipped distinction.
+    /// Callers that only care about the exit status use this; callers that need
+    /// to record a skip inspect the variant directly.
+    pub fn into_exit_code(self) -> i32 {
+        match self {
+            OpOutcome::Ran(code) | OpOutcome::SkippedLockHeld(code) => code,
+        }
+    }
+}
+
+/// The single policy for exclusive, corpus-wide mutating operations.
+///
+/// One implementation owns lock acquisition, the lock-held skip result, timeout
+/// selection, and the contention log line — so command handlers call `run`
+/// instead of hand-copying a `try_acquire` match + `install_timeout*` branch
+/// (ticket 055). Recall has exactly one process lock, so this is a concrete
+/// policy, not a pluggable lock-backend trait.
+///
+/// # Classification
+///
+/// A command is *exclusive* (uses this) when it performs a multi-step or
+/// corpus-wide mutation that an overlapping run could corrupt or partially undo
+/// (e.g. ingest, import, import-all, sync, migrate, migrate-wings). A command is
+/// a *safe short atomic write* (does NOT use this) when it issues only brief,
+/// WAL-serialized statements with no read-modify-write over the corpus — `add`
+/// (one insert + two meta upserts) is the sole such mutator. `forget` is
+/// exclusive despite being "just a delete": an overlapping ingest can restore
+/// content the user just deleted, so the delete must hold the lock.
+pub struct ExclusiveOp {
+    label: &'static str,
+    timeout: TimeoutPolicy,
+}
+
+/// Begin an exclusive corpus operation named `label` (used only in the
+/// contention log line). Chain `.timeout(...)` then `.run(...)`.
+pub fn exclusive(label: &'static str) -> ExclusiveOp {
+    ExclusiveOp {
+        label,
+        timeout: TimeoutPolicy::Fixed,
+    }
+}
+
+impl ExclusiveOp {
+    /// Set the timeout policy installed once the lock is held. Defaults to
+    /// `Fixed` if never called.
+    pub fn timeout(mut self, policy: TimeoutPolicy) -> Self {
+        self.timeout = policy;
+        self
+    }
+
+    /// Acquire the exclusive lock, install the timeout, and run `body`.
+    ///
+    /// If another instance holds the lock, `body` does NOT run and the result is
+    /// `Ok(OpOutcome::SkippedLockHeld(0))` after logging + warning once. The lock
+    /// is held for the duration of `body` and released when this returns.
+    pub fn run<F>(self, body: F) -> Result<OpOutcome>
+    where
+        F: FnOnce() -> Result<i32>,
+    {
+        let _guard = match ProcessGuard::try_acquire()? {
+            Some(g) => g,
+            None => {
+                recall_log!(
+                    "{}: another recall instance is running, skipping",
+                    self.label
+                );
+                eprintln!("recall: another instance is already running, skipping");
+                return Ok(OpOutcome::SkippedLockHeld(0));
+            }
+        };
+        self.timeout.install();
+        let code = body()?;
+        Ok(OpOutcome::Ran(code))
+    }
+}
+
+/// Whether the global process lock is currently held by another instance, for
+/// diagnostics (`recall health`). Non-blocking: try-acquire then release
+/// immediately. Never mutates state.
+///
+/// `Free` means acquisition succeeded (no other instance). `Held { pid }` means
+/// another instance holds it; `pid` is read from the lock file when present.
+/// On an I/O error probing the lock we report `Free` rather than failing health
+/// — the probe is advisory, and a health command must not error on a lock race.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "state", rename_all = "lowercase")]
+pub enum LockStatus {
+    Free,
+    Held { pid: Option<u32> },
+}
+
+impl LockStatus {
+    /// Compact human-readable form for the health text view.
+    pub fn describe(&self) -> String {
+        match self {
+            LockStatus::Free => "free".to_string(),
+            LockStatus::Held { pid: Some(pid) } => format!("held (pid {})", pid),
+            LockStatus::Held { pid: None } => "held".to_string(),
+        }
+    }
+}
+
+/// Probe the process lock without holding it. See [`LockStatus`].
+pub fn probe_lock() -> LockStatus {
+    let Ok(lock_path) = lock_path() else {
+        return LockStatus::Free;
+    };
+    // The lock file may not exist yet (no exclusive op has ever run) — that is
+    // unambiguously free.
+    let Ok(file) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+    else {
+        return LockStatus::Free;
+    };
+    match file.try_lock_exclusive() {
+        Ok(()) => {
+            // We grabbed it → nobody else holds it. Release immediately so this
+            // probe leaves no trace.
+            let _ = FileExt::unlock(&file);
+            LockStatus::Free
+        }
+        Err(e) if is_benign_contention(&e) => LockStatus::Held {
+            pid: read_lock_pid(&lock_path),
+        },
+        // A genuine I/O error probing the lock is not a held lock; health stays
+        // non-fatal and reports free.
+        Err(_) => LockStatus::Free,
+    }
+}
+
+/// Read the PID written into the lock file by the holder, if parseable.
+fn read_lock_pid(lock_path: &std::path::Path) -> Option<u32> {
+    let content = std::fs::read_to_string(lock_path).ok()?;
+    content.lines().next()?.trim().parse().ok()
+}
+
 impl ProcessGuard {
     /// Attempt to acquire the global process lock.
     ///
@@ -281,29 +462,134 @@ mod tests {
     #[test]
     fn try_acquire_second_instance_skips_gracefully() {
         // Holding the lock, a second try_acquire must return Ok(None) (skip),
-        // not Err — the contended path. Uses an isolated RECALL_DB so the lock
-        // path is unique to this test.
-        let tmp = std::env::temp_dir().join(format!("recall-guard-test-{}", std::process::id()));
+        // not Err — the contended path. Isolated RECALL_DB under the shared env
+        // lock so it can't race the other guard tests that mutate the global.
+        with_isolated_db("second-instance", |_db| {
+            let first = ProcessGuard::try_acquire().expect("first acquire ok");
+            assert!(first.is_some(), "first acquire should hold the lock");
+
+            let second = ProcessGuard::try_acquire().expect("second acquire must not error");
+            assert!(
+                second.is_none(),
+                "second acquire should skip gracefully (Ok(None)), got a guard"
+            );
+
+            drop(first);
+        });
+    }
+
+    #[test]
+    fn op_outcome_exit_code_collapses_both_variants() {
+        assert_eq!(OpOutcome::Ran(0).into_exit_code(), 0);
+        assert_eq!(OpOutcome::Ran(7).into_exit_code(), 7);
+        assert_eq!(OpOutcome::SkippedLockHeld(0).into_exit_code(), 0);
+    }
+
+    #[test]
+    fn lock_status_describe_forms() {
+        assert_eq!(LockStatus::Free.describe(), "free");
+        assert_eq!(LockStatus::Held { pid: None }.describe(), "held");
+        assert_eq!(
+            LockStatus::Held { pid: Some(4242) }.describe(),
+            "held (pid 4242)"
+        );
+    }
+
+    #[test]
+    fn lock_status_serializes_tagged() {
+        let free = serde_json::to_value(LockStatus::Free).unwrap();
+        assert_eq!(free["state"], "free");
+        let held = serde_json::to_value(LockStatus::Held { pid: Some(99) }).unwrap();
+        assert_eq!(held["state"], "held");
+        assert_eq!(held["pid"], 99);
+    }
+
+    /// Serialize guard tests that mutate the RECALL_DB process-global and the
+    /// shared on-disk lock so they can't interleave with each other.
+    static GUARD_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Run `body` with an isolated RECALL_DB pointing at a fresh temp dir, held
+    /// exclusively so no sibling guard test races the process-global.
+    fn with_isolated_db<T>(tag: &str, body: impl FnOnce(&std::path::Path) -> T) -> T {
+        let _lock = GUARD_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("recall-guard-{}-{}", tag, std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let db = tmp.join("recall.sqlite3");
-        // SAFETY: single-threaded test; sets a process-global for the lock path.
+        // SAFETY: single-threaded under GUARD_ENV_LOCK; sets a process-global.
         unsafe {
             std::env::set_var("RECALL_DB", &db);
         }
-
-        let first = ProcessGuard::try_acquire().expect("first acquire ok");
-        assert!(first.is_some(), "first acquire should hold the lock");
-
-        let second = ProcessGuard::try_acquire().expect("second acquire must not error");
-        assert!(
-            second.is_none(),
-            "second acquire should skip gracefully (Ok(None)), got a guard"
-        );
-
-        drop(first);
+        let out = body(&db);
         unsafe {
             std::env::remove_var("RECALL_DB");
         }
         let _ = std::fs::remove_dir_all(&tmp);
+        out
+    }
+
+    #[test]
+    fn probe_lock_free_when_nobody_holds() {
+        with_isolated_db("probe-free", |_db| {
+            assert_eq!(probe_lock(), LockStatus::Free, "no holder → free");
+        });
+    }
+
+    #[test]
+    fn probe_lock_reports_held_with_pid_when_locked() {
+        with_isolated_db("probe-held", |_db| {
+            let guard = ProcessGuard::try_acquire()
+                .expect("acquire ok")
+                .expect("should hold");
+            match probe_lock() {
+                LockStatus::Held { pid } => {
+                    // The holder wrote its own PID into the lock file.
+                    assert_eq!(pid, Some(std::process::id()), "held reports holder PID");
+                }
+                LockStatus::Free => panic!("probe saw free while a guard is held"),
+            }
+            drop(guard);
+            // Released → probe sees free again.
+            assert_eq!(probe_lock(), LockStatus::Free, "after drop → free");
+        });
+    }
+
+    #[test]
+    fn exclusive_op_runs_body_when_lock_free() {
+        with_isolated_db("op-runs", |_db| {
+            let ran = std::cell::Cell::new(false);
+            let outcome = exclusive("test-op")
+                .run(|| {
+                    ran.set(true);
+                    Ok(3)
+                })
+                .expect("run ok");
+            assert!(ran.get(), "body must run when lock is free");
+            assert!(matches!(outcome, OpOutcome::Ran(3)));
+        });
+    }
+
+    #[test]
+    fn exclusive_op_skips_body_when_lock_held() {
+        with_isolated_db("op-skips", |_db| {
+            let held = ProcessGuard::try_acquire()
+                .expect("acquire ok")
+                .expect("should hold");
+            let ran = std::cell::Cell::new(false);
+            let outcome = exclusive("test-op")
+                .run(|| {
+                    ran.set(true);
+                    Ok(0)
+                })
+                .expect("run ok");
+            assert!(
+                !ran.get(),
+                "body must NOT run when another instance holds lock"
+            );
+            assert!(
+                matches!(outcome, OpOutcome::SkippedLockHeld(0)),
+                "held → SkippedLockHeld(0)"
+            );
+            drop(held);
+        });
     }
 }

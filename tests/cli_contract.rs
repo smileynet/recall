@@ -94,6 +94,39 @@ fn health_json_has_required_fields() {
         json["last_ingest_ts"].is_null() || json["last_ingest_ts"].is_number(),
         "last_ingest_ts must be null or number"
     );
+
+    // process_lock: an object tagged with a `state` of "free" or "held"
+    // (ticket 055). When held it may carry an optional `pid`.
+    let lock = &json["process_lock"];
+    assert!(lock.is_object(), "process_lock must be an object");
+    let state = lock["state"]
+        .as_str()
+        .expect("process_lock.state is a string");
+    assert!(
+        state == "free" || state == "held",
+        "process_lock.state must be 'free' or 'held', got {:?}",
+        state
+    );
+}
+
+#[test]
+fn health_json_lock_free_in_fresh_db() {
+    // A fresh temp DB with no exclusive op running must report the lock free.
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("test.sqlite3");
+
+    let output = recall_cmd()
+        .env("RECALL_DB", &db_path)
+        .args(["health", "--json"])
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json["process_lock"]["state"], "free",
+        "no exclusive op running → lock free"
+    );
 }
 
 #[test]
