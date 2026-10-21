@@ -1,4 +1,5 @@
 pub mod archive;
+pub mod config;
 pub mod embed;
 pub mod guard;
 pub mod ingest;

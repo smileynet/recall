@@ -35,16 +35,18 @@ impl Default for UpdateConfig {
 }
 
 impl UpdateConfig {
-    /// Load update config from ~/.recall/config.toml
+    /// Load update config from ~/.recall/config.toml via the shared config
+    /// owner (lossless, section-aware).
     pub fn load() -> Self {
-        let path = config_path();
-        match fs::read_to_string(&path) {
-            Ok(content) => parse_update_config(&content),
-            Err(_) => Self::default(),
+        let s = crate::config::update();
+        Self {
+            check: s.check,
+            interval_hours: s.interval_hours,
         }
     }
 }
 
+#[cfg(test)]
 fn parse_update_config(content: &str) -> UpdateConfig {
     let mut config = UpdateConfig::default();
     let mut in_update_section = false;
@@ -525,14 +527,7 @@ fn last_check_path() -> PathBuf {
 }
 
 fn recall_dir() -> PathBuf {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".recall")
-}
-
-fn config_path() -> PathBuf {
-    recall_dir().join("config.toml")
+    crate::config::recall_dir()
 }
 
 fn now_epoch() -> u64 {

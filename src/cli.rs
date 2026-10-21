@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use rusqlite::params;
 
 use recall::{
-    embed, guard, ingest, logging, migrate, recall_log, search, store, telemetry, update,
+    config, embed, guard, ingest, logging, migrate, recall_log, search, store, telemetry, update,
 };
 
 #[derive(Parser)]
@@ -415,39 +415,16 @@ fn cmd_import_all(force: bool, yes: bool) -> Result<i32> {
         return Ok(0);
     }
 
-    let mut roots = Vec::new();
-    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
-        let home_code = std::path::PathBuf::from(&home).join("code");
-        if home_code.is_dir() {
-            roots.push(home_code);
-        }
-    }
-    let d_code = std::path::PathBuf::from("D:/code");
-    if d_code.is_dir() {
-        roots.push(d_code);
-    }
+    let import_cfg = config::import();
+    let roots = config::resolve_roots(&import_cfg);
+    let projects =
+        config::discover_memory_projects(&roots, &import_cfg.exclude, store::normalize_wing);
 
     let mut imported = 0;
-    for root in &roots {
-        if let Ok(entries) = std::fs::read_dir(root) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() && path.join(".memory").is_dir() {
-                    let wing = path
-                        .file_name()
-                        .map(|n| store::normalize_wing(&n.to_string_lossy()))
-                        .unwrap_or_default();
-                    let mem_path = path.join(".memory");
-                    recall_log!(
-                        "  {} → wing: {}",
-                        path.file_name().unwrap().to_string_lossy(),
-                        wing
-                    );
-                    ingest::import_directory(&mem_path.to_string_lossy(), &wing, force)?;
-                    imported += 1;
-                }
-            }
-        }
+    for project in &projects {
+        recall_log!("  {} → wing: {}", project.wing, project.wing);
+        ingest::import_directory(&project.memory_path.to_string_lossy(), &project.wing, force)?;
+        imported += 1;
     }
 
     if imported == 0 {
@@ -494,44 +471,21 @@ fn cmd_sync(force: bool, yes: bool, skip_import: bool, skip_ingest: bool) -> Res
     if !skip_import {
         recall_log!("sync: importing .memory/ directories");
 
-        let mut roots = Vec::new();
-        if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
-            let home_code = std::path::PathBuf::from(&home).join("code");
-            if home_code.is_dir() {
-                roots.push(home_code);
-            }
-        }
-        let d_code = std::path::PathBuf::from("D:/code");
-        if d_code.is_dir() {
-            roots.push(d_code);
-        }
+        let import_cfg = config::import();
+        let roots = config::resolve_roots(&import_cfg);
+        let projects =
+            config::discover_memory_projects(&roots, &import_cfg.exclude, store::normalize_wing);
 
         let mut imported = 0;
-        for root in &roots {
-            if let Ok(entries) = std::fs::read_dir(root) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_dir() && path.join(".memory").is_dir() {
-                        let wing = path
-                            .file_name()
-                            .map(|n| store::normalize_wing(&n.to_string_lossy()))
-                            .unwrap_or_default();
-                        let mem_path = path.join(".memory");
-                        recall_log!(
-                            "  {} → wing: {}",
-                            path.file_name().unwrap().to_string_lossy(),
-                            wing
-                        );
-                        ingest::import_directory_with_embedder(
-                            &mem_path.to_string_lossy(),
-                            &wing,
-                            force,
-                            &embedder,
-                        )?;
-                        imported += 1;
-                    }
-                }
-            }
+        for project in &projects {
+            recall_log!("  {} → wing: {}", project.wing, project.wing);
+            ingest::import_directory_with_embedder(
+                &project.memory_path.to_string_lossy(),
+                &project.wing,
+                force,
+                &embedder,
+            )?;
+            imported += 1;
         }
 
         recall_log!("sync: imported {} projects", imported);
@@ -807,38 +761,13 @@ fn read_last_ingest_marker() -> Option<i64> {
 }
 
 fn discover_project_coverage(import_wings: &[String]) -> (usize, usize, Vec<String>) {
-    let mut roots = Vec::new();
-
-    // User's home/code directory
-    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
-        let home_code = std::path::PathBuf::from(&home).join("code");
-        if home_code.is_dir() {
-            roots.push(home_code);
-        }
-    }
-    // D:/code (Windows multi-drive)
-    let d_code = std::path::PathBuf::from("D:/code");
-    if d_code.is_dir() {
-        roots.push(d_code);
-    }
-
-    let mut discoverable = Vec::new();
-    for root in &roots {
-        if let Ok(entries) = std::fs::read_dir(root) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() && path.join(".memory").is_dir() {
-                    let wing_name = path
-                        .file_name()
-                        .map(|n| store::normalize_wing(&n.to_string_lossy()))
-                        .unwrap_or_default();
-                    if !wing_name.is_empty() {
-                        discoverable.push(wing_name);
-                    }
-                }
-            }
-        }
-    }
+    let import_cfg = config::import();
+    let roots = config::resolve_roots(&import_cfg);
+    let discoverable: Vec<String> =
+        config::discover_memory_projects(&roots, &import_cfg.exclude, store::normalize_wing)
+            .into_iter()
+            .map(|p| p.wing)
+            .collect();
 
     let covered: Vec<&String> = discoverable
         .iter()
