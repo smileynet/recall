@@ -34,6 +34,11 @@ anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Lossless config read/modify/write (ticket 37). toml_edit preserves key order,
+# unknown sections, and comments across a targeted section update — the
+# hand-rolled parsers it replaces rewrote the whole file and erased other
+# sections (the TelemetryConfig::save data-loss bug).
+toml_edit = "0.22"
 regex = "1"
 tempfile = "3"
 

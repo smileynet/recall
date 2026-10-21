@@ -23,31 +23,44 @@ pub struct TelemetryConfig {
 
 impl TelemetryConfig {
     pub fn load() -> Self {
-        let path = config_path();
-        match fs::read_to_string(&path) {
-            Ok(content) => parse_config(&content),
-            Err(_) => Self::default(),
+        let s = crate::config::telemetry();
+        Self {
+            enabled: s.enabled,
+            crash_reporting: s.crash_reporting,
         }
     }
 
+    /// Persist `[telemetry]` losslessly — other config sections (`[update]`,
+    /// `[import]`, and any unknown future keys) are preserved. This replaces
+    /// the previous whole-file rewrite that silently erased them.
     pub fn save(&self) -> Result<()> {
-        let path = config_path();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let content = format!(
-            "[telemetry]\nenabled = {}\ncrash_reporting = {}\n",
-            self.enabled, self.crash_reporting
-        );
-        fs::write(&path, content)?;
-        Ok(())
+        crate::config::set_telemetry(crate::config::TelemetrySection {
+            enabled: self.enabled,
+            crash_reporting: self.crash_reporting,
+        })
     }
 }
 
+#[cfg(test)]
 fn parse_config(content: &str) -> TelemetryConfig {
+    // Retained only for the unit tests that exercise TOML line parsing of the
+    // `[telemetry]` section. Production load/save go through `crate::config`
+    // (lossless). This mirrors the historical hand-rolled parse semantics.
     let mut config = TelemetryConfig::default();
+    let mut in_telemetry = false;
     for line in content.lines() {
         let line = line.trim();
+        if line == "[telemetry]" {
+            in_telemetry = true;
+            continue;
+        }
+        if line.starts_with('[') {
+            in_telemetry = false;
+            continue;
+        }
+        if !in_telemetry {
+            continue;
+        }
         if let Some(val) = line.strip_prefix("enabled") {
             if let Some(val) = val.trim().strip_prefix('=') {
                 config.enabled = val.trim() == "true";
@@ -421,14 +434,11 @@ pub fn cmd_telemetry_clear() -> Result<i32> {
 // ─── Paths ───────────────────────────────────────────────────────────────────
 
 fn recall_dir() -> PathBuf {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".recall")
+    crate::config::recall_dir()
 }
 
 fn config_path() -> PathBuf {
-    recall_dir().join("config.toml")
+    crate::config::config_path()
 }
 
 fn telemetry_path() -> PathBuf {
