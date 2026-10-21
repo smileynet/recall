@@ -1,7 +1,7 @@
 ---
 id: "37"
 title: "Explore config options for user-tunable behaviors"
-status: in_progress
+status: done
 blocked_by: []
 estimate: 2h
 priority: high
@@ -77,12 +77,16 @@ Design a unified config system that lets users control:
 
 ## Acceptance criteria
 
-- [ ] Design document: which options to expose in v0.2
-- [ ] Decision on config format and parsing approach
-- [ ] Decision on CLI interface for config management
-- [ ] Priority ranking of options (which ones users actually need first)
-- [ ] One shared discovery implementation replaces the three hard-coded root
+- [x] Design document: which options to expose in v0.2
+- [x] Decision on config format and parsing approach
+- [x] Decision on CLI interface for config management
+- [x] Priority ranking of options (which ones users actually need first)
+- [x] One shared discovery implementation replaces the three hard-coded root
       scans before additional root-related behavior is added
-- [ ] `import.roots` and `import.exclude` are included in the first delivery
-- [ ] The design specifies full-document, lossless config update semantics and
+- [x] `import.roots` and `import.exclude` are included in the first delivery
+- [x] The design specifies full-document, lossless config update semantics and
       the local-state ownership boundary consumed by #087
+
+## Resolution (2026-10-21)
+
+Design + first delivery of user-tunable config. Added src/config.rs (577 lines) as the single config-document owner: lossless read/modify/write via toml_edit (preserves other sections, unknown future keys, comments), typed telemetry/update/import accessors, and one discover_memory_projects() driven by import.roots/import.exclude. Replaced the three duplicated hardcoded (~/code + D:/code) root scans in cmd_import_all, cmd_sync phase 2, and discover_project_coverage with the shared API (defaults preserve prior behavior). Re-homed telemetry+update reads/writes through the lossless owner, fixing the live data-loss bug where TelemetryConfig::save() erased other sections. Design doc .memory/design-config-v0.2.md records format/CLI/precedence decisions, the #087 single-owner boundary, and the ranked v0.2 keyset. Chose toml_edit over decoder-only toml because AC7 requires lossless full-document update semantics (format/comment preservation).
