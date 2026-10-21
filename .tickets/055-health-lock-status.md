@@ -1,7 +1,7 @@
 ---
 id: "055"
 title: "Centralize exclusive corpus-operation policy and report lock status"
-status: open
+status: in_progress
 blocked_by: []
 priority: high
 validation_criteria:
