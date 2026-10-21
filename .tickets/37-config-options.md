@@ -1,7 +1,7 @@
 ---
 id: "37"
 title: "Explore config options for user-tunable behaviors"
-status: open
+status: in_progress
 blocked_by: []
 estimate: 2h
 priority: high
