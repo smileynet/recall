@@ -1,10 +1,14 @@
-use clap::{Parser, Subcommand};
 use anyhow::Result;
+use clap::{Parser, Subcommand};
 
-use recall::{store, search, ingest, embed, migrate, telemetry, update, logging, recall_log};
+use recall::{embed, ingest, logging, migrate, recall_log, search, store, telemetry, update};
 
 #[derive(Parser)]
-#[command(name = "recall", version, about = "Cross-session semantic memory for AI coding assistants")]
+#[command(
+    name = "recall",
+    version,
+    about = "Cross-session semantic memory for AI coding assistants"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -125,8 +129,17 @@ pub fn run() -> i32 {
     let command_name = command_name(&cli.command);
 
     let result = match cli.command {
-        Commands::Search { query, wing, results } => cmd_search(&query, wing.as_deref(), results),
-        Commands::Add { content, wing, room, r#type } => {
+        Commands::Search {
+            query,
+            wing,
+            results,
+        } => cmd_search(&query, wing.as_deref(), results),
+        Commands::Add {
+            content,
+            wing,
+            room,
+            r#type,
+        } => {
             let resolved_wing = wing.unwrap_or_else(wing_from_cwd);
             cmd_add(&content, &resolved_wing, &room, &r#type)
         }
@@ -145,7 +158,11 @@ pub fn run() -> i32 {
             TelemetryAction::Stats => telemetry::cmd_telemetry_stats(),
             TelemetryAction::Clear => telemetry::cmd_telemetry_clear(),
         },
-        Commands::Sync { force, skip_import, skip_ingest } => cmd_sync(force, skip_import, skip_ingest),
+        Commands::Sync {
+            force,
+            skip_import,
+            skip_ingest,
+        } => cmd_sync(force, skip_import, skip_ingest),
         Commands::Update => update::cmd_update(),
     };
 
@@ -181,7 +198,8 @@ fn command_name(cmd: &Commands) -> String {
         Commands::Telemetry { .. } => "telemetry",
         Commands::Sync { .. } => "sync",
         Commands::Update => "update",
-    }.to_string()
+    }
+    .to_string()
 }
 
 /// Derive wing name from current working directory.
@@ -257,11 +275,16 @@ fn cmd_import_all(force: bool) -> Result<i32> {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() && path.join(".memory").is_dir() {
-                    let wing = path.file_name()
+                    let wing = path
+                        .file_name()
                         .map(|n| n.to_string_lossy().replace('-', "_").replace('.', ""))
                         .unwrap_or_default();
                     let mem_path = path.join(".memory");
-                    recall_log!("  {} → wing: {}", path.file_name().unwrap().to_string_lossy(), wing);
+                    recall_log!(
+                        "  {} → wing: {}",
+                        path.file_name().unwrap().to_string_lossy(),
+                        wing
+                    );
                     ingest::import_directory(&mem_path.to_string_lossy(), &wing, force)?;
                     imported += 1;
                 }
@@ -314,13 +337,21 @@ fn cmd_sync(force: bool, skip_import: bool, skip_ingest: bool) -> Result<i32> {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.is_dir() && path.join(".memory").is_dir() {
-                        let wing = path.file_name()
+                        let wing = path
+                            .file_name()
                             .map(|n| n.to_string_lossy().replace('-', "_").replace('.', ""))
                             .unwrap_or_default();
                         let mem_path = path.join(".memory");
-                        recall_log!("  {} → wing: {}", path.file_name().unwrap().to_string_lossy(), wing);
+                        recall_log!(
+                            "  {} → wing: {}",
+                            path.file_name().unwrap().to_string_lossy(),
+                            wing
+                        );
                         ingest::import_directory_with_embedder(
-                            &mem_path.to_string_lossy(), &wing, force, &embedder
+                            &mem_path.to_string_lossy(),
+                            &wing,
+                            force,
+                            &embedder,
                         )?;
                         imported += 1;
                     }
@@ -341,14 +372,12 @@ fn cmd_prime(wing_arg: Option<&str>) -> Result<i32> {
     embed::check_model_mismatch(&db);
 
     // Auto-detect wing from cwd if not provided
-    let wing = wing_arg
-        .map(|w| w.to_string())
-        .unwrap_or_else(|| {
-            std::env::current_dir()
-                .ok()
-                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().replace('-', "_")))
-                .unwrap_or_else(|| "global".to_string())
-        });
+    let wing = wing_arg.map(|w| w.to_string()).unwrap_or_else(|| {
+        std::env::current_dir()
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().replace('-', "_")))
+            .unwrap_or_else(|| "global".to_string())
+    });
 
     // Instructions header (always shown)
     println!("## Recall - Cross-Session Memory");
@@ -431,13 +460,22 @@ fn cmd_health(json: bool) -> Result<i32> {
     } else {
         println!("\n  Recall Health");
         println!("  {}", "─".repeat(40));
-        println!("  Total chunks:  {:>6} ({} import, {} session, {} agent)",
-            health.total_chunks, health.import_chunks, health.session_chunks, health.agent_chunks);
+        println!(
+            "  Total chunks:  {:>6} ({} import, {} session, {} agent)",
+            health.total_chunks, health.import_chunks, health.session_chunks, health.agent_chunks
+        );
         println!("  Wings:         {:>6}", health.wing_count);
-        println!("  Coverage:      {}/{} projects imported",
-            health.covered_projects, health.discoverable_projects);
+        println!(
+            "  Coverage:      {}/{} projects imported",
+            health.covered_projects, health.discoverable_projects
+        );
         if !health.missing_projects.is_empty() {
-            let display: Vec<&str> = health.missing_projects.iter().take(5).map(|s| s.as_str()).collect();
+            let display: Vec<&str> = health
+                .missing_projects
+                .iter()
+                .take(5)
+                .map(|s| s.as_str())
+                .collect();
             let suffix = if health.missing_projects.len() > 5 {
                 format!(" (+{} more)", health.missing_projects.len() - 5)
             } else {
@@ -460,7 +498,11 @@ fn cmd_health(json: bool) -> Result<i32> {
         }
         if let Some(log_path) = recall::logging::current_log_path() {
             if let Ok(meta) = std::fs::metadata(&log_path) {
-                println!("  Last log:      {} ({:.1} KB)", log_path.display(), meta.len() as f64 / 1024.0);
+                println!(
+                    "  Last log:      {} ({:.1} KB)",
+                    log_path.display(),
+                    meta.len() as f64 / 1024.0
+                );
             }
         }
         println!();
@@ -490,26 +532,43 @@ fn build_health_report(db: &rusqlite::Connection) -> Result<HealthReport> {
     let total: i64 = db.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))?;
 
     // Per-source-type counts
-    let import_chunks: i64 = db.query_row(
-        "SELECT COUNT(*) FROM chunks WHERE source LIKE 'import:%'", [], |r| r.get(0)
-    ).unwrap_or(0);
-    let session_chunks: i64 = db.query_row(
-        "SELECT COUNT(*) FROM chunks WHERE type = 'session'", [], |r| r.get(0)
-    ).unwrap_or(0);
-    let agent_chunks: i64 = db.query_row(
-        "SELECT COUNT(*) FROM chunks WHERE source = 'agent'", [], |r| r.get(0)
-    ).unwrap_or(0);
+    let import_chunks: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM chunks WHERE source LIKE 'import:%'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let session_chunks: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM chunks WHERE type = 'session'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let agent_chunks: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM chunks WHERE source = 'agent'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
 
     // Per-wing breakdown
     let mut stmt = db.prepare("SELECT wing, COUNT(*) FROM chunks GROUP BY wing ORDER BY wing")?;
-    let wings: std::collections::HashMap<String, i64> = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    })?.filter_map(|r| r.ok()).collect();
+    let wings: std::collections::HashMap<String, i64> = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
 
     // Import wings (wings with import: source entries)
     let mut stmt = db.prepare("SELECT DISTINCT wing FROM chunks WHERE source LIKE 'import:%'")?;
-    let import_wings: Vec<String> = stmt.query_map([], |row| row.get(0))?
-        .filter_map(|r| r.ok()).collect();
+    let import_wings: Vec<String> = stmt
+        .query_map([], |row| row.get(0))?
+        .filter_map(|r| r.ok())
+        .collect();
 
     // Duplicate wing detection (names differing only by hyphen/underscore)
     let duplicates = detect_wing_duplicates(&wings.keys().cloned().collect::<Vec<_>>());
@@ -538,19 +597,25 @@ fn build_health_report(db: &rusqlite::Connection) -> Result<HealthReport> {
 }
 
 fn detect_wing_duplicates(wing_names: &[String]) -> Vec<Vec<String>> {
-    let mut normalized: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut normalized: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     for name in wing_names {
-        let key = name.replace('-', "_").replace('.', "_").to_lowercase();
+        let key = name.replace(['-', '.'], "_").to_lowercase();
         normalized.entry(key).or_default().push(name.clone());
     }
-    normalized.into_values().filter(|names| names.len() > 1).collect()
+    normalized
+        .into_values()
+        .filter(|names| names.len() > 1)
+        .collect()
 }
 
 fn read_last_ingest_marker() -> Option<i64> {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .ok()?;
-    let marker = std::path::PathBuf::from(home).join(".recall").join("last_ingest");
+    let marker = std::path::PathBuf::from(home)
+        .join(".recall")
+        .join("last_ingest");
     let content = std::fs::read_to_string(marker).ok()?;
     content.trim().parse().ok()
 }
@@ -577,7 +642,8 @@ fn discover_project_coverage(import_wings: &[String]) -> (usize, usize, Vec<Stri
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() && path.join(".memory").is_dir() {
-                    let wing_name = path.file_name()
+                    let wing_name = path
+                        .file_name()
                         .map(|n| n.to_string_lossy().replace('-', "_").replace('.', ""))
                         .unwrap_or_default();
                     if !wing_name.is_empty() {
@@ -588,10 +654,12 @@ fn discover_project_coverage(import_wings: &[String]) -> (usize, usize, Vec<Stri
         }
     }
 
-    let covered: Vec<&String> = discoverable.iter()
+    let covered: Vec<&String> = discoverable
+        .iter()
         .filter(|p| import_wings.contains(p))
         .collect();
-    let missing: Vec<String> = discoverable.iter()
+    let missing: Vec<String> = discoverable
+        .iter()
         .filter(|p| !import_wings.contains(p))
         .cloned()
         .collect();
@@ -603,12 +671,14 @@ fn cmd_forget(wing: &str, older_than: Option<&str>) -> Result<i32> {
     let db = store::open_db()?;
 
     let deleted = if let Some(age_str) = older_than {
-        let seconds = parse_duration(age_str)
-            .ok_or_else(|| anyhow::anyhow!("invalid duration '{}' (use e.g. 90d, 24h, 4w)", age_str))?;
+        let seconds = parse_duration(age_str).ok_or_else(|| {
+            anyhow::anyhow!("invalid duration '{}' (use e.g. 90d, 24h, 4w)", age_str)
+        })?;
         let cutoff = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs() as i64 - seconds;
+            .as_secs() as i64
+            - seconds;
         store::delete_wing_older_than(&db, wing, cutoff)?
     } else {
         store::delete_wing(&db, wing)?
@@ -621,7 +691,9 @@ fn cmd_forget(wing: &str, older_than: Option<&str>) -> Result<i32> {
 /// Parse a duration string like "90d", "24h", "4w" into seconds.
 fn parse_duration(s: &str) -> Option<i64> {
     let s = s.trim();
-    if s.is_empty() { return None; }
+    if s.is_empty() {
+        return None;
+    }
     let (num_str, suffix) = s.split_at(s.len() - 1);
     let num: i64 = num_str.parse().ok()?;
     match suffix {

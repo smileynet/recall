@@ -16,7 +16,9 @@ fn setup_db(dir: &TempDir) -> rusqlite::Connection {
 }
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests").join("fixtures")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
 }
 
 // =============================================================================
@@ -31,10 +33,30 @@ fn test_add_and_search_round_trip() {
 
     // Add several facts to different wings
     let facts = [
-        ("We decided to use Rust for the rebuild because of fastembed-rs", "recall", "decisions", "decision"),
-        ("The scan cache uses mtime plus size for fast change detection", "recall", "architecture", "fact"),
-        ("Authentication uses JWT with 15-minute expiry tokens", "web-app", "auth", "decision"),
-        ("Database migrations run on startup with embedded SQL files", "web-app", "infra", "fact"),
+        (
+            "We decided to use Rust for the rebuild because of fastembed-rs",
+            "recall",
+            "decisions",
+            "decision",
+        ),
+        (
+            "The scan cache uses mtime plus size for fast change detection",
+            "recall",
+            "architecture",
+            "fact",
+        ),
+        (
+            "Authentication uses JWT with 15-minute expiry tokens",
+            "web-app",
+            "auth",
+            "decision",
+        ),
+        (
+            "Database migrations run on startup with embedded SQL files",
+            "web-app",
+            "infra",
+            "fact",
+        ),
     ];
 
     for (content, wing, room, dtype) in &facts {
@@ -58,10 +80,19 @@ fn test_add_and_search_round_trip() {
     );
 
     // Scoped search — wing filter should restrict results
-    let scoped = search::hybrid_search(&conn, &embedder, "authentication tokens", Some("web-app"), 5)
-        .expect("scoped search failed");
+    let scoped = search::hybrid_search(
+        &conn,
+        &embedder,
+        "authentication tokens",
+        Some("web-app"),
+        5,
+    )
+    .expect("scoped search failed");
     assert!(!scoped.is_empty(), "scoped search should return results");
-    assert_eq!(scoped[0].wing, "web-app", "scoped results should be in web-app wing");
+    assert_eq!(
+        scoped[0].wing, "web-app",
+        "scoped results should be in web-app wing"
+    );
     assert!(
         scoped[0].content.contains("JWT"),
         "top result should mention JWT"
@@ -86,9 +117,12 @@ fn test_ingest_from_fixtures() {
     let fixtures = fixtures_dir();
 
     // Scan should find fixture JSONL files as "changed" (no prior cache)
-    let changed = scan::scan_for_changes(&fixtures, &conn)
-        .expect("scan_for_changes failed");
-    assert_eq!(changed.len(), 3, "should detect 3 fixture JSONL files as new");
+    let changed = scan::scan_for_changes(&fixtures, &conn).expect("scan_for_changes failed");
+    assert_eq!(
+        changed.len(),
+        3,
+        "should detect 3 fixture JSONL files as new"
+    );
 
     // Manually ingest: read each file, chunk, embed, store (mirrors ingest.rs logic)
     let mut total_chunks = 0;
@@ -124,8 +158,16 @@ fn test_ingest_from_fixtures() {
         let embeddings = embedder.embed_batch(&texts).unwrap();
 
         for (chunk, embedding) in chunks.iter().zip(embeddings.iter()) {
-            store::insert_chunk(&conn, chunk, &wing, "general", "session", &file_path.to_string_lossy(), embedding)
-                .unwrap();
+            store::insert_chunk(
+                &conn,
+                chunk,
+                &wing,
+                "general",
+                "session",
+                &file_path.to_string_lossy(),
+                embedding,
+            )
+            .unwrap();
         }
 
         // Update scan cache
@@ -133,10 +175,15 @@ fn test_ingest_from_fixtures() {
         total_chunks += chunks.len();
     }
 
-    assert!(total_chunks >= 5, "should have ingested at least 5 chunks from fixtures, got {}", total_chunks);
+    assert!(
+        total_chunks >= 5,
+        "should have ingested at least 5 chunks from fixtures, got {}",
+        total_chunks
+    );
 
     // Verify chunks are searchable
-    let results = search::hybrid_search(&conn, &embedder, "fastembed embeddings Rust", None, 5).unwrap();
+    let results =
+        search::hybrid_search(&conn, &embedder, "fastembed embeddings Rust", None, 5).unwrap();
     assert!(!results.is_empty(), "ingested content should be searchable");
     assert!(
         results[0].content.contains("fastembed") || results[0].content.contains("Rust"),
@@ -146,7 +193,10 @@ fn test_ingest_from_fixtures() {
     // Verify wing was derived from filename
     let stats = store::corpus_stats(&conn).unwrap();
     assert!(
-        stats.wings.iter().any(|(w, _)| w == "session-001" || w == "session-002"),
+        stats
+            .wings
+            .iter()
+            .any(|(w, _)| w == "session-001" || w == "session-002"),
         "should have wings derived from filenames, got: {:?}",
         stats.wings
     );
@@ -183,9 +233,12 @@ fn test_scan_cache_hit_miss() {
     let fixtures = fixtures_dir();
 
     // First scan: all files should be detected as changed (cache miss)
-    let first_scan = scan::scan_for_changes(&fixtures, &conn)
-        .expect("first scan failed");
-    assert_eq!(first_scan.len(), 3, "first scan should detect all JSONL files as new");
+    let first_scan = scan::scan_for_changes(&fixtures, &conn).expect("first scan failed");
+    assert_eq!(
+        first_scan.len(),
+        3,
+        "first scan should detect all JSONL files as new"
+    );
 
     // Update cache for all detected files
     for path in &first_scan {
@@ -193,15 +246,22 @@ fn test_scan_cache_hit_miss() {
     }
 
     // Second scan: no files should be detected (cache hit)
-    let second_scan = scan::scan_for_changes(&fixtures, &conn)
-        .expect("second scan failed");
-    assert_eq!(second_scan.len(), 0, "second scan should detect no changes (cache hit)");
+    let second_scan = scan::scan_for_changes(&fixtures, &conn).expect("second scan failed");
+    assert_eq!(
+        second_scan.len(),
+        0,
+        "second scan should detect no changes (cache hit)"
+    );
 
     // Verify cache entries exist
     for path in &first_scan {
-        let entry = store::get_scan_entry(&conn, &path.to_string_lossy())
-            .expect("get_scan_entry failed");
-        assert!(entry.is_some(), "cache entry should exist for {}", path.display());
+        let entry =
+            store::get_scan_entry(&conn, &path.to_string_lossy()).expect("get_scan_entry failed");
+        assert!(
+            entry.is_some(),
+            "cache entry should exist for {}",
+            path.display()
+        );
         let (mtime, size, hash) = entry.unwrap();
         assert!(mtime > 0, "mtime should be positive");
         assert!(size > 0, "size should be positive");
@@ -214,9 +274,12 @@ fn test_scan_cache_hit_miss() {
     std::fs::write(&new_file, r#"{"role":"user","content":"This is a brand new session file that was just created for testing change detection"}"#).unwrap();
 
     // Scan the temp dir — should find the new file
-    let new_scan = scan::scan_for_changes(scan_tmp.path(), &conn)
-        .expect("new dir scan failed");
-    assert_eq!(new_scan.len(), 1, "should detect new file in fresh directory");
+    let new_scan = scan::scan_for_changes(scan_tmp.path(), &conn).expect("new dir scan failed");
+    assert_eq!(
+        new_scan.len(),
+        1,
+        "should detect new file in fresh directory"
+    );
     assert_eq!(new_scan[0], new_file);
 
     // Cache it, then modify
@@ -232,7 +295,11 @@ fn test_scan_cache_hit_miss() {
 {"role":"assistant","content":"I can see the file was modified. The scan cache should detect this change because the mtime and file size have both changed."}"#).unwrap();
 
     // Should detect the modification
-    let modified_scan = scan::scan_for_changes(scan_tmp.path(), &conn)
-        .expect("modified scan failed");
-    assert_eq!(modified_scan.len(), 1, "should detect modified file (cache miss after change)");
+    let modified_scan =
+        scan::scan_for_changes(scan_tmp.path(), &conn).expect("modified scan failed");
+    assert_eq!(
+        modified_scan.len(),
+        1,
+        "should detect modified file (cache miss after change)"
+    );
 }

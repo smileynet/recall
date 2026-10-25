@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use serde::Serialize;
 
 /// Open the recall database (creating if needed), with WAL mode.
@@ -11,11 +11,13 @@ pub fn open_db() -> Result<Connection> {
     let conn = Connection::open(&path)
         .with_context(|| format!("opening database at {}", path.display()))?;
 
-    conn.execute_batch("
+    conn.execute_batch(
+        "
         PRAGMA journal_mode=WAL;
         PRAGMA busy_timeout=5000;
         PRAGMA synchronous=NORMAL;
-    ")?;
+    ",
+    )?;
     init_schema(&conn)?;
     Ok(conn)
 }
@@ -31,7 +33,8 @@ fn db_path() -> PathBuf {
 }
 
 fn init_schema(conn: &Connection) -> Result<()> {
-    conn.execute_batch("
+    conn.execute_batch(
+        "
         CREATE TABLE IF NOT EXISTS chunks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             content TEXT NOT NULL,
@@ -72,7 +75,8 @@ fn init_schema(conn: &Connection) -> Result<()> {
             chunk_count INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (path, wing)
         );
-    ")?;
+    ",
+    )?;
     Ok(())
 }
 
@@ -103,7 +107,12 @@ pub fn insert_chunk(
 }
 
 /// BM25 search via FTS5.
-pub fn bm25_search(conn: &Connection, query: &str, wing: Option<&str>, limit: usize) -> Result<Vec<SearchResult>> {
+pub fn bm25_search(
+    conn: &Connection,
+    query: &str,
+    wing: Option<&str>,
+    limit: usize,
+) -> Result<Vec<SearchResult>> {
     let mut results = Vec::new();
 
     if let Some(w) = wing {
@@ -111,19 +120,23 @@ pub fn bm25_search(conn: &Connection, query: &str, wing: Option<&str>, limit: us
             "SELECT c.id, c.content, c.wing, c.room, c.type, c.source, c.embedding, rank AS score
              FROM fts_chunks f JOIN chunks c ON c.id = f.rowid
              WHERE fts_chunks MATCH ?1 AND c.wing = ?2
-             ORDER BY rank LIMIT ?3"
+             ORDER BY rank LIMIT ?3",
         )?;
         let rows = stmt.query_map(params![query, w, limit * 3], map_search_row)?;
-        for r in rows { if let Ok(v) = r { results.push(v); } }
+        for v in rows.flatten() {
+            results.push(v);
+        }
     } else {
         let mut stmt = conn.prepare(
             "SELECT c.id, c.content, c.wing, c.room, c.type, c.source, c.embedding, rank AS score
              FROM fts_chunks f JOIN chunks c ON c.id = f.rowid
              WHERE fts_chunks MATCH ?1
-             ORDER BY rank LIMIT ?2"
+             ORDER BY rank LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![query, limit * 3], map_search_row)?;
-        for r in rows { if let Ok(v) = r { results.push(v); } }
+        for v in rows.flatten() {
+            results.push(v);
+        }
     }
 
     Ok(results)
@@ -135,24 +148,27 @@ pub fn all_embeddings(conn: &Connection, wing: Option<&str>) -> Result<Vec<(i64,
 
     if let Some(w) = wing {
         let mut stmt = conn.prepare(
-            "SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL AND wing = ?1"
+            "SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL AND wing = ?1",
         )?;
         let rows = stmt.query_map(params![w], |row| {
             let id: i64 = row.get(0)?;
             let blob: Vec<u8> = row.get(1)?;
             Ok((id, bytes_to_embedding(&blob)))
         })?;
-        for r in rows { if let Ok(v) = r { results.push(v); } }
+        for v in rows.flatten() {
+            results.push(v);
+        }
     } else {
-        let mut stmt = conn.prepare(
-            "SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL"
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL")?;
         let rows = stmt.query_map([], |row| {
             let id: i64 = row.get(0)?;
             let blob: Vec<u8> = row.get(1)?;
             Ok((id, bytes_to_embedding(&blob)))
         })?;
-        for r in rows { if let Ok(v) = r { results.push(v); } }
+        for v in rows.flatten() {
+            results.push(v);
+        }
     }
 
     Ok(results)
@@ -161,14 +177,18 @@ pub fn all_embeddings(conn: &Connection, wing: Option<&str>) -> Result<Vec<(i64,
 /// Get a chunk by id.
 pub fn get_chunk(conn: &Connection, id: i64) -> Result<SearchResult> {
     let mut stmt = conn.prepare(
-        "SELECT id, content, wing, room, type, source, embedding, 0.0 FROM chunks WHERE id = ?1"
+        "SELECT id, content, wing, room, type, source, embedding, 0.0 FROM chunks WHERE id = ?1",
     )?;
     let result = stmt.query_row(params![id], map_search_row)?;
     Ok(result)
 }
 
 /// Recent agent-written facts.
-pub fn recent_agent_facts(conn: &Connection, wing: Option<&str>, limit: usize) -> Result<Vec<ChunkInfo>> {
+pub fn recent_agent_facts(
+    conn: &Connection,
+    wing: Option<&str>,
+    limit: usize,
+) -> Result<Vec<ChunkInfo>> {
     let mut results = Vec::new();
 
     if let Some(w) = wing {
@@ -184,7 +204,9 @@ pub fn recent_agent_facts(conn: &Connection, wing: Option<&str>, limit: usize) -
                 created_at: row.get(4)?,
             })
         })?;
-        for r in rows { if let Ok(v) = r { results.push(v); } }
+        for v in rows.flatten() {
+            results.push(v);
+        }
     } else {
         let mut stmt = conn.prepare(
             "SELECT content, wing, room, type, created_at FROM chunks WHERE source = 'agent' ORDER BY created_at DESC LIMIT ?1"
@@ -198,7 +220,9 @@ pub fn recent_agent_facts(conn: &Connection, wing: Option<&str>, limit: usize) -
                 created_at: row.get(4)?,
             })
         })?;
-        for r in rows { if let Ok(v) = r { results.push(v); } }
+        for v in rows.flatten() {
+            results.push(v);
+        }
     }
 
     Ok(results)
@@ -208,11 +232,17 @@ pub fn recent_agent_facts(conn: &Connection, wing: Option<&str>, limit: usize) -
 pub fn corpus_stats(conn: &Connection) -> Result<CorpusStats> {
     let total: i64 = conn.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))?;
     let mut stmt = conn.prepare("SELECT wing, COUNT(*) FROM chunks GROUP BY wing ORDER BY wing")?;
-    let wings: Vec<(String, i64)> = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    })?.filter_map(|r| r.ok()).collect();
+    let wings: Vec<(String, i64)> = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
 
-    Ok(CorpusStats { total_chunks: total, wings })
+    Ok(CorpusStats {
+        total_chunks: total,
+        wings,
+    })
 }
 
 /// Delete all chunks in a wing.
@@ -265,9 +295,14 @@ pub fn get_meta(conn: &Connection, key: &str) -> Result<Option<String>> {
 // --- Scan cache ---
 
 pub fn get_scan_entry(conn: &Connection, path: &str) -> Result<Option<(i64, i64, String)>> {
-    let mut stmt = conn.prepare("SELECT mtime, size, content_hash FROM scan_cache WHERE path = ?1")?;
+    let mut stmt =
+        conn.prepare("SELECT mtime, size, content_hash FROM scan_cache WHERE path = ?1")?;
     let result = stmt.query_row(params![path], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?))
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+        ))
     });
     match result {
         Ok(r) => Ok(Some(r)),
@@ -276,7 +311,13 @@ pub fn get_scan_entry(conn: &Connection, path: &str) -> Result<Option<(i64, i64,
     }
 }
 
-pub fn set_scan_entry(conn: &Connection, path: &str, mtime: i64, size: i64, hash: &str) -> Result<()> {
+pub fn set_scan_entry(
+    conn: &Connection,
+    path: &str,
+    mtime: i64,
+    size: i64,
+    hash: &str,
+) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO scan_cache (path, mtime, size, content_hash) VALUES (?1, ?2, ?3, ?4)",
         params![path, mtime, size, hash],
@@ -347,13 +388,19 @@ pub fn delete_chunks_by_source(conn: &Connection, source: &str) -> Result<usize>
 /// Delete chunks by source key prefix (LIKE 'prefix%').
 /// Escapes LIKE wildcards in the prefix to prevent unintended matches.
 pub fn delete_chunks_by_source_prefix(conn: &Connection, prefix: &str) -> Result<usize> {
-    let escaped = prefix.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+    let escaped = prefix
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
     let pattern = format!("{}%", escaped);
     conn.execute(
         "DELETE FROM fts_chunks WHERE rowid IN (SELECT id FROM chunks WHERE source LIKE ?1 ESCAPE '\\')",
         params![pattern],
     )?;
-    let deleted = conn.execute("DELETE FROM chunks WHERE source LIKE ?1 ESCAPE '\\'", params![pattern])?;
+    let deleted = conn.execute(
+        "DELETE FROM chunks WHERE source LIKE ?1 ESCAPE '\\'",
+        params![pattern],
+    )?;
     Ok(deleted)
 }
 
@@ -393,7 +440,8 @@ fn embedding_to_bytes(embedding: &[f32]) -> Vec<u8> {
 }
 
 fn bytes_to_embedding(bytes: &[u8]) -> Vec<f32> {
-    bytes.chunks_exact(4)
+    bytes
+        .chunks_exact(4)
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect()
 }

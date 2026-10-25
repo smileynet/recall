@@ -94,7 +94,11 @@ pub fn log(msg: &str) {
 /// Get the path to the current log file (for health reporting).
 pub fn current_log_path() -> Option<PathBuf> {
     let path = logs_dir().join(format!("{}.log", today_date()));
-    if path.exists() { Some(path) } else { None }
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 fn rotate_logs(dir: &PathBuf) {
@@ -103,8 +107,7 @@ fn rotate_logs(dir: &PathBuf) {
         Err(_) => return,
     };
 
-    let cutoff = std::time::SystemTime::now()
-        - std::time::Duration::from_secs(7 * 24 * 3600);
+    let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(7 * 24 * 3600);
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -172,7 +175,6 @@ macro_rules! recall_log {
         $crate::logging::log(&format!($($arg)*))
     };
 }
-
 
 #[cfg(test)]
 mod tests {

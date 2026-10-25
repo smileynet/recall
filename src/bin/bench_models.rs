@@ -2,8 +2,8 @@
 /// Measures embedding speed, search latency, and retrieval quality overlap.
 use std::time::Instant;
 
-use recall::{embed, search, store};
 use recall::embed::Model;
+use recall::{embed, search, store};
 
 /// 20 test queries representing real recall usage patterns.
 const QUERIES: &[&str] = &[
@@ -59,7 +59,8 @@ fn main() {
 
     // === Performance: Single Embedding ===
     println!("=== Single Embedding (average of 10) ===");
-    let test_text = "We decided to use Rust for the rebuild because fastembed-rs gives native local embeddings";
+    let test_text =
+        "We decided to use Rust for the rebuild because fastembed-rs gives native local embeddings";
 
     let t = Instant::now();
     for _ in 0..10 {
@@ -74,7 +75,10 @@ fn main() {
     }
     let small_single = t.elapsed() / 10;
     println!("  bge-small: {:?}/embed", small_single);
-    println!("  Ratio: {:.1}x faster (small)", base_single.as_micros() as f64 / small_single.as_micros() as f64);
+    println!(
+        "  Ratio: {:.1}x faster (small)",
+        base_single.as_micros() as f64 / small_single.as_micros() as f64
+    );
     println!();
 
     // === Performance: Batch Embedding (64 texts) ===
@@ -84,17 +88,31 @@ fn main() {
     let t = Instant::now();
     base_embedder.embed_batch(&batch_texts).unwrap();
     let base_batch = t.elapsed();
-    println!("  bge-base: {:?} ({:.0} texts/sec)", base_batch, 64.0 / base_batch.as_secs_f64());
+    println!(
+        "  bge-base: {:?} ({:.0} texts/sec)",
+        base_batch,
+        64.0 / base_batch.as_secs_f64()
+    );
 
     let t = Instant::now();
     small_embedder.embed_batch(&batch_texts).unwrap();
     let small_batch = t.elapsed();
-    println!("  bge-small: {:?} ({:.0} texts/sec)", small_batch, 64.0 / small_batch.as_secs_f64());
-    println!("  Ratio: {:.1}x faster (small)", base_batch.as_micros() as f64 / small_batch.as_micros() as f64);
+    println!(
+        "  bge-small: {:?} ({:.0} texts/sec)",
+        small_batch,
+        64.0 / small_batch.as_secs_f64()
+    );
+    println!(
+        "  Ratio: {:.1}x faster (small)",
+        base_batch.as_micros() as f64 / small_batch.as_micros() as f64
+    );
     println!();
 
     // === Search Quality Comparison ===
-    println!("=== Search Quality (top-5 overlap on {} queries) ===", QUERIES.len());
+    println!(
+        "=== Search Quality (top-5 overlap on {} queries) ===",
+        QUERIES.len()
+    );
     let conn = store::open_db().unwrap();
 
     // Get baseline results with bge-base
@@ -105,8 +123,11 @@ fn main() {
         base_results.push(results.iter().map(|r| r.id).collect());
     }
     let base_search_total = t.elapsed();
-    println!("  bge-base total search time: {:?} ({:?}/query)",
-        base_search_total, base_search_total / QUERIES.len() as u32);
+    println!(
+        "  bge-base total search time: {:?} ({:?}/query)",
+        base_search_total,
+        base_search_total / QUERIES.len() as u32
+    );
 
     // Get comparison results with bge-small (same BM25, different vector component)
     let mut small_results: Vec<Vec<i64>> = Vec::new();
@@ -116,8 +137,11 @@ fn main() {
         small_results.push(results.iter().map(|r| r.id).collect());
     }
     let small_search_total = t.elapsed();
-    println!("  bge-small total search time: {:?} ({:?}/query)",
-        small_search_total, small_search_total / QUERIES.len() as u32);
+    println!(
+        "  bge-small total search time: {:?} ({:?}/query)",
+        small_search_total,
+        small_search_total / QUERIES.len() as u32
+    );
     println!();
 
     // === Quality Metrics ===
@@ -145,22 +169,42 @@ fn main() {
             top1_match_count += 1;
         }
 
-        let overlap_pct = if possible > 0 { overlap as f64 / possible as f64 } else { 1.0 };
+        let overlap_pct = if possible > 0 {
+            overlap as f64 / possible as f64
+        } else {
+            1.0
+        };
         if overlap_pct < 0.6 {
             divergent_queries.push((i, overlap_pct));
         }
     }
 
     let overall_overlap = total_overlap as f64 / total_possible as f64 * 100.0;
-    println!("  Top-5 overlap: {:.1}% ({}/{})", overall_overlap, total_overlap, total_possible);
-    println!("  Exact top-5 match: {}/{} queries", exact_match_count, QUERIES.len());
-    println!("  Top-1 match: {}/{} queries", top1_match_count, QUERIES.len());
+    println!(
+        "  Top-5 overlap: {:.1}% ({}/{})",
+        overall_overlap, total_overlap, total_possible
+    );
+    println!(
+        "  Exact top-5 match: {}/{} queries",
+        exact_match_count,
+        QUERIES.len()
+    );
+    println!(
+        "  Top-1 match: {}/{} queries",
+        top1_match_count,
+        QUERIES.len()
+    );
     println!();
 
     if !divergent_queries.is_empty() {
         println!("  Divergent queries (< 60% overlap):");
         for (idx, pct) in &divergent_queries {
-            println!("    [{:2}] {:.0}% — \"{}\"", idx, pct * 100.0, QUERIES[*idx]);
+            println!(
+                "    [{:2}] {:.0}% — \"{}\"",
+                idx,
+                pct * 100.0,
+                QUERIES[*idx]
+            );
         }
         println!();
     }
@@ -182,17 +226,31 @@ fn main() {
     } else {
         f64::NAN
     };
-    println!("  Avg rank displacement: {:.2} positions (0 = identical ranking)", avg_displacement);
-    println!("  (across {} ID pairs found in both result sets)", rank_pairs);
+    println!(
+        "  Avg rank displacement: {:.2} positions (0 = identical ranking)",
+        avg_displacement
+    );
+    println!(
+        "  (across {} ID pairs found in both result sets)",
+        rank_pairs
+    );
     println!();
 
     // === Summary ===
     println!("=== Summary ===");
-    println!("  Speed:   bge-small is {:.1}x faster for single embeds, {:.1}x for batch",
+    println!(
+        "  Speed:   bge-small is {:.1}x faster for single embeds, {:.1}x for batch",
         base_single.as_micros() as f64 / small_single.as_micros() as f64,
-        base_batch.as_micros() as f64 / small_batch.as_micros() as f64);
-    println!("  Quality: {:.1}% top-5 overlap, top-1 agrees {}/{} times",
-        overall_overlap, top1_match_count, QUERIES.len());
-    println!("  Storage: bge-base = 768×4 = 3072 bytes/chunk, bge-small = 384×4 = 1536 bytes/chunk");
+        base_batch.as_micros() as f64 / small_batch.as_micros() as f64
+    );
+    println!(
+        "  Quality: {:.1}% top-5 overlap, top-1 agrees {}/{} times",
+        overall_overlap,
+        top1_match_count,
+        QUERIES.len()
+    );
+    println!(
+        "  Storage: bge-base = 768×4 = 3072 bytes/chunk, bge-small = 384×4 = 1536 bytes/chunk"
+    );
     println!("  At 194K chunks: bge-base = ~570MB embeddings, bge-small = ~285MB embeddings");
 }

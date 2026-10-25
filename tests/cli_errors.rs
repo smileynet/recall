@@ -51,7 +51,9 @@ fn ingest_nonexistent_path() {
     cmd.args(["ingest", "/nonexistent/path/that/does/not/exist"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("not found").or(predicate::str::contains("not a directory")));
+        .stderr(
+            predicate::str::contains("not found").or(predicate::str::contains("not a directory")),
+        );
 }
 
 #[test]

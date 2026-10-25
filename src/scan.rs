@@ -3,15 +3,12 @@ use std::time::UNIX_EPOCH;
 
 use anyhow::Result;
 use jwalk::WalkDir;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 use crate::store;
 
 /// Scan a directory for JSONL files and return those that have changed.
-pub fn scan_for_changes(
-    dir: &Path,
-    conn: &rusqlite::Connection,
-) -> Result<Vec<PathBuf>> {
+pub fn scan_for_changes(dir: &Path, conn: &rusqlite::Connection) -> Result<Vec<PathBuf>> {
     let mut changed = Vec::new();
 
     for entry in WalkDir::new(dir)
@@ -23,7 +20,8 @@ pub fn scan_for_changes(
     {
         let path = entry.path();
         let meta = entry.metadata()?;
-        let mtime = meta.modified()?
+        let mtime = meta
+            .modified()?
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
@@ -53,7 +51,8 @@ pub fn file_hash(path: &Path) -> Result<String> {
 /// Update the scan cache entry for a file.
 pub fn update_cache(conn: &rusqlite::Connection, path: &Path) -> Result<()> {
     let meta = std::fs::metadata(path)?;
-    let mtime = meta.modified()?
+    let mtime = meta
+        .modified()?
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;

@@ -15,19 +15,10 @@ use serde::{Deserialize, Serialize};
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct TelemetryConfig {
     pub enabled: bool,
     pub crash_reporting: bool,
-}
-
-impl Default for TelemetryConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            crash_reporting: false,
-        }
-    }
 }
 
 impl TelemetryConfig {
@@ -169,7 +160,13 @@ pub fn record_event(command: &str, start: Instant, exit_code: i32, error: Option
         arch: std::env::consts::ARCH.to_string(),
         duration_ms: start.elapsed().as_millis() as u64,
         exit_code,
-        error_type: error.map(|e| format!("{}", e).split(':').next().unwrap_or("unknown").to_string()),
+        error_type: error.map(|e| {
+            format!("{}", e)
+                .split(':')
+                .next()
+                .unwrap_or("unknown")
+                .to_string()
+        }),
         date: today_date(),
     };
 
@@ -223,7 +220,7 @@ fn build_crash_report(info: &std::panic::PanicHookInfo) -> String {
 
     let location = info
         .location()
-        .map(|l| format!("{}:{}:{}", redact_paths(&l.file().to_string()), l.line(), l.column()))
+        .map(|l| format!("{}:{}:{}", redact_paths(l.file()), l.line(), l.column()))
         .unwrap_or_else(|| "unknown location".to_string());
 
     let command = redact_paths(&std::env::args().collect::<Vec<_>>().join(" "));
@@ -251,11 +248,7 @@ fn build_crash_report(info: &std::panic::PanicHookInfo) -> String {
 fn write_crash_report(report: &str) -> Result<()> {
     let dir = crashes_dir();
     fs::create_dir_all(&dir)?;
-    let filename = format!(
-        "crash-{}-{}.txt",
-        today_date(),
-        std::process::id()
-    );
+    let filename = format!("crash-{}-{}.txt", today_date(), std::process::id());
     let path = dir.join(filename);
     fs::write(&path, report)?;
     eprintln!("\nCrash report saved to: {}", path.display());
@@ -280,9 +273,24 @@ pub fn cmd_telemetry_status() -> Result<i32> {
 
     println!("\n  Telemetry Status");
     println!("  {}", "─".repeat(30));
-    println!("  Usage telemetry:   {}", if suppressed { "disabled (env override)" }
-        else if config.enabled { "enabled" } else { "disabled" });
-    println!("  Crash reporting:   {}", if config.crash_reporting { "enabled" } else { "disabled" });
+    println!(
+        "  Usage telemetry:   {}",
+        if suppressed {
+            "disabled (env override)"
+        } else if config.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    println!(
+        "  Crash reporting:   {}",
+        if config.crash_reporting {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
 
     if suppressed {
         if matches!(std::env::var("DO_NOT_TRACK").as_deref(), Ok("1")) {
@@ -296,7 +304,11 @@ pub fn cmd_telemetry_status() -> Result<i32> {
     let telemetry_file = telemetry_path();
     if telemetry_file.exists() {
         if let Ok(meta) = fs::metadata(&telemetry_file) {
-            println!("  Data file:         {} ({} bytes)", telemetry_file.display(), meta.len());
+            println!(
+                "  Data file:         {} ({} bytes)",
+                telemetry_file.display(),
+                meta.len()
+            );
         }
     } else {
         println!("  Data file:         (none)");
@@ -361,7 +373,10 @@ pub fn cmd_telemetry_stats() -> Result<i32> {
     println!("  {}", "─".repeat(30));
     println!("  Total events:      {}", total_events);
     println!("  Error events:      {}", error_count);
-    println!("  Total time:        {:.1}s", total_duration_ms as f64 / 1000.0);
+    println!(
+        "  Total time:        {:.1}s",
+        total_duration_ms as f64 / 1000.0
+    );
     println!();
     println!("  Commands:");
     let mut sorted: Vec<_> = commands.iter().collect();
@@ -478,7 +493,10 @@ mod tests {
 
         // Temporarily override config path via env for isolation
         // (Can't easily mock config_path, so test save format directly)
-        let config = TelemetryConfig { enabled: true, crash_reporting: false };
+        let config = TelemetryConfig {
+            enabled: true,
+            crash_reporting: false,
+        };
         let content = format!(
             "[telemetry]\nenabled = {}\ncrash_reporting = {}\n",
             config.enabled, config.crash_reporting
@@ -502,7 +520,10 @@ mod tests {
         // This just verifies the function doesn't panic
         let result = stdin_is_tty();
         // In CI/test: almost always false
-        assert!(!result, "expected stdin to not be a TTY in test environment");
+        assert!(
+            !result,
+            "expected stdin to not be a TTY in test environment"
+        );
     }
 
     #[test]

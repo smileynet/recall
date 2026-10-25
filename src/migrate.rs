@@ -2,7 +2,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 
 use crate::{embed::Embedder, store};
 
@@ -40,7 +40,11 @@ pub fn run_migrate(source_path: &str, batch_embed: bool) -> Result<()> {
     if batch_embed {
         eprintln!("  Mode: re-embedding all content (ignoring source embeddings)");
         let embedder = Embedder::new()?;
-        eprintln!("  Model: {} ({}-dim)", embedder.model().name(), embedder.dimensions());
+        eprintln!(
+            "  Model: {} ({}-dim)",
+            embedder.model().name(),
+            embedder.dimensions()
+        );
         migrate_with_embeddings(&src_conn, &dst_conn, &embedder, total_rows)?;
     } else {
         eprintln!("  Mode: direct copy (preserving source embeddings, bge-base 768-dim)");
@@ -51,14 +55,26 @@ pub fn run_migrate(source_path: &str, batch_embed: bool) -> Result<()> {
     migrate_sources(&src_conn, &dst_conn)?;
 
     // Store model metadata
-    store::set_meta(&dst_conn, "embedding_model", crate::embed::DEFAULT_MODEL.name())?;
-    store::set_meta(&dst_conn, "embedding_dim", &crate::embed::DEFAULT_MODEL.dimensions().to_string())?;
+    store::set_meta(
+        &dst_conn,
+        "embedding_model",
+        crate::embed::DEFAULT_MODEL.name(),
+    )?;
+    store::set_meta(
+        &dst_conn,
+        "embedding_dim",
+        &crate::embed::DEFAULT_MODEL.dimensions().to_string(),
+    )?;
 
     // Checkpoint WAL — migration writes large amounts of data
     dst_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
 
     let stats = store::corpus_stats(&dst_conn)?;
-    eprintln!("\n  Done: {} chunks in {} wings", stats.total_chunks, stats.wings.len());
+    eprintln!(
+        "\n  Done: {} chunks in {} wings",
+        stats.total_chunks,
+        stats.wings.len()
+    );
     Ok(())
 }
 
@@ -169,7 +185,8 @@ fn migrate_direct(src: &Connection, dst: &Connection, total: usize) -> Result<()
 
     dst.execute("BEGIN", [])?;
     for row_result in rows {
-        let (content, embedding_blob, wing, room, dtype, source, source_file, created_at) = row_result?;
+        let (content, embedding_blob, wing, room, dtype, source, source_file, created_at) =
+            row_result?;
         let effective_src = source_file.as_deref().unwrap_or(&source);
         let epoch = parse_created_at(&created_at);
 
@@ -208,7 +225,15 @@ fn flush_batch_with_embeddings(
     dst.execute("BEGIN IMMEDIATE", [])?;
     for (row, embedding) in batch.iter().zip(embeddings.iter()) {
         let source = effective_source(row);
-        store::insert_chunk(dst, &row.content, &row.wing, &row.room, &row.dtype, &source, embedding)?;
+        store::insert_chunk(
+            dst,
+            &row.content,
+            &row.wing,
+            &row.room,
+            &row.dtype,
+            &source,
+            embedding,
+        )?;
     }
     dst.execute("COMMIT", [])?;
     Ok(())
@@ -221,7 +246,8 @@ fn migrate_sources(src: &Connection, dst: &Connection) -> Result<()> {
         return Ok(());
     }
 
-    let mut stmt = src.prepare("SELECT path, content_hash, file_size, last_indexed_at FROM sources")?;
+    let mut stmt =
+        src.prepare("SELECT path, content_hash, file_size, last_indexed_at FROM sources")?;
     let rows = stmt.query_map([], |row| {
         Ok((
             row.get::<_, String>(0)?,
@@ -348,7 +374,6 @@ struct SourceRow {
     title: Option<String>,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,7 +384,11 @@ mod tests {
         assert!(epoch.is_some());
         // 2026-07-14 08:46:52 -0700 = 2026-07-14 15:46:52 UTC
         let val = epoch.unwrap();
-        assert!(val > 1_783_000_000, "should be a reasonable epoch value: {}", val);
+        assert!(
+            val > 1_783_000_000,
+            "should be a reasonable epoch value: {}",
+            val
+        );
     }
 
     #[test]

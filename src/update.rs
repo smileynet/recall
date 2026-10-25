@@ -141,7 +141,10 @@ fn fetch_latest_version() -> Result<Option<String>> {
 
     let response = ureq::get(&url)
         .set("Accept", "application/vnd.github.v3+json")
-        .set("User-Agent", &format!("recall/{}", env!("CARGO_PKG_VERSION")))
+        .set(
+            "User-Agent",
+            &format!("recall/{}", env!("CARGO_PKG_VERSION")),
+        )
         .timeout(std::time::Duration::from_secs(5))
         .call()
         .context("failed to fetch latest release")?;
@@ -217,7 +220,10 @@ fn find_asset_url(version: &str) -> Result<String> {
 
     let response = ureq::get(&url)
         .set("Accept", "application/vnd.github.v3+json")
-        .set("User-Agent", &format!("recall/{}", env!("CARGO_PKG_VERSION")))
+        .set(
+            "User-Agent",
+            &format!("recall/{}", env!("CARGO_PKG_VERSION")),
+        )
         .call()
         .context("failed to fetch release info")?;
 
@@ -226,7 +232,8 @@ fn find_asset_url(version: &str) -> Result<String> {
         .context("failed to parse release JSON")?;
 
     let target = platform_target();
-    let assets = body.get("assets")
+    let assets = body
+        .get("assets")
         .and_then(|a| a.as_array())
         .ok_or_else(|| anyhow::anyhow!("no assets in release"))?;
 
@@ -251,18 +258,17 @@ fn platform_target() -> String {
         "windows" => "pc-windows",
         other => other,
     };
-    let arch = match std::env::consts::ARCH {
-        "x86_64" => "x86_64",
-        "aarch64" => "aarch64",
-        other => other,
-    };
+    let arch = std::env::consts::ARCH;
     format!("{}-{}", arch, os)
 }
 
 /// Download an asset from the given URL.
 fn download_asset(url: &str) -> Result<Vec<u8>> {
     let response = ureq::get(url)
-        .set("User-Agent", &format!("recall/{}", env!("CARGO_PKG_VERSION")))
+        .set(
+            "User-Agent",
+            &format!("recall/{}", env!("CARGO_PKG_VERSION")),
+        )
         .call()
         .context("failed to download asset")?;
 
@@ -282,14 +288,23 @@ fn extract_binary(archive_bytes: &[u8]) -> Result<Vec<u8>> {
     let decoder = GzDecoder::new(archive_bytes);
     let mut archive = tar::Archive::new(decoder);
 
-    let binary_name = if cfg!(windows) { "recall.exe" } else { "recall" };
+    let binary_name = if cfg!(windows) {
+        "recall.exe"
+    } else {
+        "recall"
+    };
 
-    for entry in archive.entries().context("failed to read archive entries")? {
+    for entry in archive
+        .entries()
+        .context("failed to read archive entries")?
+    {
         let mut entry = entry.context("failed to read archive entry")?;
         let path = entry.path().context("failed to read entry path")?;
         if path.file_name().and_then(|n| n.to_str()) == Some(binary_name) {
             let mut buf = Vec::new();
-            entry.read_to_end(&mut buf).context("failed to read binary from archive")?;
+            entry
+                .read_to_end(&mut buf)
+                .context("failed to read binary from archive")?;
             return Ok(buf);
         }
     }
@@ -304,17 +319,14 @@ fn replace_self(new_binary: &[u8]) -> Result<()> {
     if cfg!(windows) {
         // Windows: can't overwrite a running exe. Rename old, write new, delete old on next run.
         let backup = current_exe.with_extension("old");
-        fs::rename(&current_exe, &backup)
-            .context("failed to rename current binary")?;
-        fs::write(&current_exe, new_binary)
-            .context("failed to write new binary")?;
+        fs::rename(&current_exe, &backup).context("failed to rename current binary")?;
+        fs::write(&current_exe, new_binary).context("failed to write new binary")?;
         // Clean up old binary (best effort)
         let _ = fs::remove_file(&backup);
     } else {
         // Unix: write to temp, set executable, rename (atomic on same filesystem)
         let tmp_path = current_exe.with_extension("tmp");
-        fs::write(&tmp_path, new_binary)
-            .context("failed to write new binary")?;
+        fs::write(&tmp_path, new_binary).context("failed to write new binary")?;
 
         #[cfg(unix)]
         {
@@ -323,8 +335,7 @@ fn replace_self(new_binary: &[u8]) -> Result<()> {
                 .context("failed to set executable permission")?;
         }
 
-        fs::rename(&tmp_path, &current_exe)
-            .context("failed to replace binary")?;
+        fs::rename(&tmp_path, &current_exe).context("failed to replace binary")?;
     }
 
     Ok(())
@@ -423,6 +434,10 @@ mod tests {
     #[test]
     fn test_platform_target_format() {
         let target = platform_target();
-        assert!(target.contains('-'), "target should contain arch-os: {}", target);
+        assert!(
+            target.contains('-'),
+            "target should contain arch-os: {}",
+            target
+        );
     }
 }
